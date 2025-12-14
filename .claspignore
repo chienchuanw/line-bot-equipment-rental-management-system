@@ -1,0 +1,31 @@
+# packages
+node_modules/
+
+# tests
+tests/
+coverage/
+*.test.js
+
+# config
+.clasp.json
+.claspignore
+package.json
+package-lock.json
+pnpm-lock.yaml
+jest.config.js
+
+# version control
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# docs
+README.md
+LICENSE
+
+# other
+.DS_Store
+*.log
