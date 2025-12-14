@@ -94,23 +94,27 @@ describe('main.js - LINE Bot 路由', () => {
     function handleEvent_(event) {
       if (event.type !== 'message' || !event.message || event.message.type !== 'text') return;
 
-      const text = String(event.message.text || '').trim();
+      const rawText = String(event.message.text || '').trim();
       const userId = (event.source && event.source.userId) || 'unknown';
+
+      // 借器材（需要保留原始格式，包含換行）
+      if (/^借器材/i.test(rawText)) {
+        return handleBorrowForm_(event, rawText, userId);
+      }
+
+      // 正規化使用者輸入：移除所有空白字元（含全形空白）
+      const text = rawText.replace(/\s+/g, '');
 
       if (/^查指令$/.test(text)) {
         return replyMessage_(event.replyToken, helpText_());
       }
 
-      if (/^借器材/i.test(text)) {
-        return handleBorrowForm_(event, text, userId);
-      }
-
-      const mQueryDate = text.match(/^查器材\s*(\d{4}\.\d{2}\.\d{2})$/);
+      const mQueryDate = text.match(/^查器材(\d{4}\.\d{2}\.\d{2})$/);
       if (mQueryDate) {
         return replyBorrowedOnDate_(event.replyToken, mQueryDate[1]);
       }
 
-      const mQueryMonth = text.match(/^查器材\s*(\d{4}\.\d{2})$/);
+      const mQueryMonth = text.match(/^查器材(\d{4}\.\d{2})$/);
       if (mQueryMonth) {
         return replyBorrowedOnMonth_(event.replyToken, mQueryMonth[1]);
       }
@@ -119,7 +123,7 @@ describe('main.js - LINE Bot 路由', () => {
         return replyMyBorrowRecords_(event.replyToken, userId);
       }
 
-      const mDelete = text.match(/^刪除\s*(\d+)$/);
+      const mDelete = text.match(/^刪除(\d+)$/);
       if (mDelete) {
         return handleDeleteRecord_(event, mDelete[1], userId);
       }
@@ -226,23 +230,27 @@ describe('main.js - LINE Bot 路由', () => {
     function handleEvent_(event) {
       if (event.type !== 'message' || !event.message || event.message.type !== 'text') return;
 
-      const text = String(event.message.text || '').trim();
+      const rawText = String(event.message.text || '').trim();
       const userId = (event.source && event.source.userId) || 'unknown';
+
+      // 借器材（需要保留原始格式，包含換行）
+      if (/^借器材/i.test(rawText)) {
+        return handleBorrowForm_(event, rawText, userId);
+      }
+
+      // 正規化使用者輸入：移除所有空白字元（含全形空白）
+      const text = rawText.replace(/\s+/g, '');
 
       if (/^查指令$/.test(text)) {
         return replyMessage_(event.replyToken, helpText_());
       }
 
-      if (/^借器材/i.test(text)) {
-        return handleBorrowForm_(event, text, userId);
-      }
-
-      const mQueryDate = text.match(/^查器材\s*(\d{4}\.\d{2}\.\d{2})$/);
+      const mQueryDate = text.match(/^查器材(\d{4}\.\d{2}\.\d{2})$/);
       if (mQueryDate) {
         return replyBorrowedOnDate_(event.replyToken, mQueryDate[1]);
       }
 
-      const mQueryMonth = text.match(/^查器材\s*(\d{4}\.\d{2})$/);
+      const mQueryMonth = text.match(/^查器材(\d{4}\.\d{2})$/);
       if (mQueryMonth) {
         return replyBorrowedOnMonth_(event.replyToken, mQueryMonth[1]);
       }
@@ -251,7 +259,7 @@ describe('main.js - LINE Bot 路由', () => {
         return replyMyBorrowRecords_(event.replyToken, userId);
       }
 
-      const mDelete = text.match(/^刪除\s*(\d+)$/);
+      const mDelete = text.match(/^刪除(\d+)$/);
       if (mDelete) {
         return handleDeleteRecord_(event, mDelete[1], userId);
       }

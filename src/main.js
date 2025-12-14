@@ -70,27 +70,30 @@ function handleEvent_(event) {
   // 只處理文字訊息
   if (event.type !== 'message' || !event.message || event.message.type !== 'text') return;
 
-  const text = String(event.message.text || '').trim();
+  const rawText = String(event.message.text || '').trim();
   const userId = (event.source && event.source.userId) || 'unknown';
+
+  // 借器材（需要保留原始格式，包含換行）
+  if (/^借器材/i.test(rawText)) {
+    return handleBorrowForm_(event, rawText, userId);
+  }
+
+  // 正規化使用者輸入：移除所有空白字元（含全形空白）
+  const text = rawText.replace(/\s+/g, '');
 
   // 查指令
   if (/^查指令$/.test(text)) {
     return replyMessage_(event.replyToken, helpText_());
   }
 
-  // 借器材
-  if (/^借器材/i.test(text)) {
-    return handleBorrowForm_(event, text, userId);
-  }
-
   // 查器材（特定日期）
-  const mQueryDate = text.match(/^查器材\s*(\d{4}\.\d{2}\.\d{2})$/);
+  const mQueryDate = text.match(/^查器材(\d{4}\.\d{2}\.\d{2})$/);
   if (mQueryDate) {
     return replyBorrowedOnDate_(event.replyToken, mQueryDate[1]);
   }
 
   // 查器材（指定月份）
-  const mQueryMonth = text.match(/^查器材\s*(\d{4}\.\d{2})$/);
+  const mQueryMonth = text.match(/^查器材(\d{4}\.\d{2})$/);
   if (mQueryMonth) {
     return replyBorrowedOnMonth_(event.replyToken, mQueryMonth[1]);
   }
@@ -101,7 +104,7 @@ function handleEvent_(event) {
   }
 
   // 刪除記錄
-  const mDelete = text.match(/^刪除\s*(\d+)$/);
+  const mDelete = text.match(/^刪除(\d+)$/);
   if (mDelete) {
     return handleDeleteRecord_(event, mDelete[1], userId);
   }
