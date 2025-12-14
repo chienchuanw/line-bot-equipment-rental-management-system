@@ -28,7 +28,7 @@ describe('main.js - LINE Bot 路由', () => {
   beforeEach(() => {
     // 建立測試環境
     env = setupTestEnvironment({});
-    
+
     // Mock ContentService
     mockContentService = {
       createTextOutput: jest.fn((text) => ({
@@ -38,7 +38,7 @@ describe('main.js - LINE Bot 路由', () => {
         TEXT: 'text/plain'
       }
     };
-    
+
     // Mock 業務邏輯函式
     mockReplyMessage = jest.fn();
     mockHelpText = jest.fn(() => '指令說明文字');
@@ -48,7 +48,7 @@ describe('main.js - LINE Bot 路由', () => {
     mockReplyMyBorrowRecords = jest.fn();
     mockHandleDeleteRecord = jest.fn();
     mockEnsureLoansHeaders = jest.fn();
-    
+
     global.ContentService = mockContentService;
     global.replyMessage_ = mockReplyMessage;
     global.helpText_ = mockHelpText;
@@ -328,6 +328,32 @@ describe('main.js - LINE Bot 路由', () => {
       const event = {
         type: 'message',
         message: { type: 'text', text: '查器材 2025.09' },
+        replyToken: 'token',
+        source: { userId: 'U123' }
+      };
+
+      handleEvent_(event);
+
+      expect(mockReplyBorrowedOnMonth).toHaveBeenCalledWith('token', '2025.09');
+    });
+
+    test('應該路由日期查詢到 replyBorrowedOnDate_ (沒有空格)', () => {
+      const event = {
+        type: 'message',
+        message: { type: 'text', text: '查器材2025.09.01' },
+        replyToken: 'token',
+        source: { userId: 'U123' }
+      };
+
+      handleEvent_(event);
+
+      expect(mockReplyBorrowedOnDate).toHaveBeenCalledWith('token', '2025.09.01');
+    });
+
+    test('應該路由月份查詢到 replyBorrowedOnMonth_ (沒有空格)', () => {
+      const event = {
+        type: 'message',
+        message: { type: 'text', text: '查器材2025.09' },
         replyToken: 'token',
         source: { userId: 'U123' }
       };
