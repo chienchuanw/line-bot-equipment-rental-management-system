@@ -68,7 +68,8 @@ function parseDotMonth_(s) {
  */
 function toDateOrNull_(v) {
   if (v instanceof Date) return v;
-  if (!v) return null;
+  // 注意：0 是有效的時間戳記（Unix epoch），所以要特別處理
+  if (v === null || v === undefined || v === '' || v === false) return null;
   const d = new Date(v);
   return isNaN(d) ? null : d;
 }
