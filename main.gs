@@ -84,13 +84,13 @@ function handleEvent_(event) {
   }
 
   // 查器材（特定日期）
-  const mQueryDate = text.match(/^查器材\s+(\d{4}\.\d{2}\.\d{2})$/);
+  const mQueryDate = text.match(/^查器材\s*(\d{4}\.\d{2}\.\d{2})$/);
   if (mQueryDate) {
     return replyBorrowedOnDate_(event.replyToken, mQueryDate[1]);
   }
 
   // 查器材（指定月份）
-  const mQueryMonth = text.match(/^查器材\s+(\d{4}\.\d{2})$/);
+  const mQueryMonth = text.match(/^查器材\s*(\d{4}\.\d{2})$/);
   if (mQueryMonth) {
     return replyBorrowedOnMonth_(event.replyToken, mQueryMonth[1]);
   }
@@ -101,7 +101,7 @@ function handleEvent_(event) {
   }
 
   // 刪除記錄
-  const mDelete = text.match(/^刪除\s+(\d+)$/);
+  const mDelete = text.match(/^刪除\s*(\d+)$/);
   if (mDelete) {
     return handleDeleteRecord_(event, mDelete[1], userId);
   }
