@@ -307,17 +307,19 @@ clasp open-script
 
 #### 查看執行記錄
 
-查看 Apps Script 的執行日誌：
+查看 Apps Script 的執行日誌（需要設定 Project ID）：
 
 ```bash
-clasp logs
+clasp tail-logs
 ```
 
-顯示最近 50 條日誌：
+常用選項：
 
-```bash
-clasp logs --limit 50
-```
+- `--json` - 以 JSON 格式輸出
+- `--watch` - 持續監視日誌
+- `--simplified` - 簡化輸出格式
+- `--open` - 在瀏覽器中開啟日誌頁面
+- `--setup` - 設定 Project ID
 
 ### .claspignore 設定
 
@@ -358,8 +360,9 @@ clasp logs --limit 50
    ```
 
 4. **查看執行記錄**：
+
    ```bash
-   clasp logs
+   clasp tail-logs
    ```
 
 #### 部署到生產環境
@@ -401,7 +404,7 @@ clasp pull
 clasp open-script
 
 # 查看日誌
-clasp logs
+clasp tail-logs
 
 # 列出所有部署
 clasp list-deployments
