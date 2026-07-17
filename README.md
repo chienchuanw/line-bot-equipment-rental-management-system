@@ -1,94 +1,123 @@
 # LINE Bot 器材租借管理系統
 
-一個基於 LINE Bot + Google Apps Script + Google Sheets 的器材租借管理系統，讓團隊可以輕鬆管理拍攝器材的借用與歸還。
+一個基於 LINE Bot + Google Apps Script + Google Sheets 的器材租借管理系統，讓團隊透過 LINE 訊息登記、查詢與取消拍攝器材的借用。
+
+## 目錄
+
+- [專案簡介](#專案簡介)
+- [功能特色](#功能特色)
+- [開始使用](#開始使用)
+  - [事前準備](#事前準備)
+  - [安裝與部署](#安裝與部署)
+- [使用方式](#使用方式)
+  - [指令列表](#指令列表)
+  - [借器材](#借器材)
+  - [查器材](#查器材)
+  - [我的租借與刪除](#我的租借與刪除)
+- [設定](#設定)
+- [資料結構](#資料結構)
+- [專案結構](#專案結構)
+- [本地開發](#本地開發)
+  - [使用 clasp 同步程式碼](#使用-clasp-同步程式碼)
+  - [測試](#測試)
+- [疑難排解](#疑難排解)
+- [貢獻](#貢獻)
+- [授權條款](#授權條款)
+
+## 專案簡介
+
+適合攝影工作室、學校社團，或任何需要管理共用器材的團隊。使用者不需要安裝任何 App，也不需要開啟試算表，只要在 LINE 中傳送文字指令即可完成登記與查詢；所有資料會自動寫入團隊的 Google 試算表，方便後續統計與稽核。
+
+設計上的幾個重點：
+
+- **無伺服器**：整個系統跑在 Google Apps Script 上，不需要自架主機，也沒有額外費用。
+- **試算表即資料庫**：資料存放在 Google Sheets，管理者可以直接開啟試算表檢視或修改。
+- **純文字介面**：所有操作都是 LINE 文字指令，指令與回覆皆為繁體中文。
 
 ## 功能特色
 
-- **器材借用登記**：透過 LINE 訊息四行格式快速登記器材借用
-- **日期查詢**：查詢特定日期的器材借用狀況
-- **Google Sheets 整合**：所有資料自動儲存到 Google 試算表
-- **使用者識別**：自動記錄借用者的 LINE 顯示名稱
-- **簡單易用**：直覺的指令介面，無需複雜操作
+- **器材借用登記**：以四行格式一次登記多項器材與租借期間。
+- **單日查詢**：查詢某一天有哪些器材被借走、由誰借走。
+- **月份查詢**：查詢整個月份的租借狀況，並依租用日期排序。
+- **我的租借**：列出自己進行中與未來的租借記錄，並附上可操作的編號。
+- **取消與提前歸還**：未來的記錄可直接取消；進行中的記錄則調整為提前歸還。
+- **使用者識別**：自動透過 LINE API 取得借用者的顯示名稱並記錄。
 
-## 快速開始
+## 開始使用
 
-### 1. 建立 LINE Bot
+### 事前準備
 
-1. 前往 [LINE Developers Console](https://developers.line.biz/)
-2. 建立新的 Provider 和 Messaging API Channel
-3. 記錄以下資訊：
-   - **Channel Access Token** (長期)
-   - **Channel Secret** (選用，用於驗證)
+- Node.js >= 18.0.0（僅本地開發與測試需要）
+- pnpm >= 8.0.0
+- [clasp](https://github.com/google/clasp) >= 3（用於推送程式碼到 Apps Script）
+- 一個 Google 帳號與一個 LINE Developers 帳號
 
-### 2. 建立 Google Sheets
+```bash
+npm install -g @google/clasp
+pnpm install
+```
 
-1. 建立新的 Google 試算表
-2. 記錄試算表的 ID（網址中的長字串）
+### 安裝與部署
 
-### 3. 設定 Google Apps Script
+**1. 建立 LINE Bot**
 
-1. 在 Google Sheets 中，點選「擴充功能」→「Apps Script」
-2. 刪除預設的 `Code.gs` 檔案
-3. 將本專案的所有 `.gs` 檔案複製到專案中：
-   - `main.gs` - 主要入口點
-   - `config.gs` - 設定管理
-   - `dateUtils.gs` - 日期工具
-   - `sheetService.gs` - 試算表操作
-   - `lineService.gs` - LINE API 通訊
-   - `borrowService.gs` - 借用邏輯
-   - `queryService.gs` - 查詢功能
-4. 儲存專案（Ctrl+S）
+前往 [LINE Developers Console](https://developers.line.biz/)，建立 Provider 與 Messaging API Channel，並記下 **Channel Access Token**（長期）。
 
-### 4. 設定環境變數
+**2. 建立 Google 試算表**
 
-在 Apps Script 編輯器中：
+建立一份新的 Google 試算表。系統會在首次請求時自動建立名為 `loans` 的工作表與標題列，不需要手動建表。
 
-1. 點選左側「專案設定」
-2. 在「指令碼屬性」區塊點選「新增指令碼屬性」
-3. 新增以下屬性：
+**3. 建立 Apps Script 專案**
 
-| 屬性名稱              | 值                        | 說明                           |
-| --------------------- | ------------------------- | ------------------------------ |
-| `LINE_CHANNEL_TOKEN`  | 你的 Channel Access Token | **必填** - LINE Bot 的存取權杖 |
-| `LINE_CHANNEL_SECRET` | 你的 Channel Secret       | 選填 - 用於訊息驗證            |
+在該試算表中點選「擴充功能」→「Apps Script」，並記下專案設定中的 **Script ID**。
 
-### 5. 部署 Web 應用程式
+**4. 推送程式碼**
 
-1. 在 Apps Script 編輯器中，點選右上角「部署」→「新增部署作業」
-2. 選擇類型：「網頁應用程式」
-3. 設定：
-   - **說明**：LINE Bot Webhook
-   - **執行身分**：我
-   - **存取權限**：任何人
-4. 點選「部署」
-5. **複製 Web 應用程式網址**（這就是 Webhook URL）
+將 `.clasp.json` 中的 `scriptId` 換成你自己的專案 ID，然後推送：
 
-### 6. 設定 LINE Bot Webhook
+```bash
+clasp login
+clasp push
+```
 
-1. 回到 [LINE Developers Console](https://developers.line.biz/)
-2. 選擇你的 Messaging API Channel
-3. 在「Messaging API」分頁中：
-   - 將「Webhook URL」設定為剛才複製的網址
-   - 啟用「Use webhook」
-   - 停用「Auto-reply messages」（避免重複回應）
+**5. 設定 Script Properties**
 
-### 7. 測試設定
+在 Apps Script 編輯器中點選「專案設定」→「指令碼屬性」，新增 `LINE_CHANNEL_TOKEN`（詳見[設定](#設定)）。
 
-1. 用手機 LINE 掃描 Bot 的 QR Code 加為好友
-2. 傳送「查指令」測試是否正常運作
-3. 如果收到指令說明，表示設定成功！
+**6. 部署為網頁應用程式**
+
+在 Apps Script 編輯器中點選「部署」→「新增部署作業」，類型選擇「網頁應用程式」，設定執行身分為「我」、存取權限為「任何人」，然後複製產生的 **網頁應用程式網址**。
+
+**7. 設定 Webhook**
+
+回到 LINE Developers Console 的 Messaging API 分頁：
+
+- 將「Webhook URL」設為上一步複製的網址
+- 啟用「Use webhook」
+- 停用「Auto-reply messages」（避免重複回應）
+
+**8. 測試**
+
+用手機加入 Bot 為好友，傳送「查指令」。如果收到指令說明，表示設定完成。
 
 ## 使用方式
 
 ### 指令列表
 
-| 指令       | 格式                | 說明                   |
-| ---------- | ------------------- | ---------------------- |
-| **借器材** | 四行格式（見下方）  | 登記器材借用           |
-| **查器材** | `查器材 YYYY.MM.DD` | 查詢特定日期的借用狀況 |
-| **查指令** | `查指令`            | 顯示所有可用指令       |
+| 指令 | 格式 | 說明 |
+| --- | --- | --- |
+| 借器材 | 四行格式（見下方） | 登記器材借用 |
+| 查器材 | `查器材 YYYY.MM.DD` | 查詢特定日期的借用狀況 |
+| 查器材 | `查器材 YYYY.MM` | 查詢整個月份的借用狀況 |
+| 我的租借 | `我的租借` | 列出自己可操作的租借記錄 |
+| 刪除 | `刪除 <編號>` | 取消或提前歸還指定編號的記錄 |
+| 查指令 | `查指令` | 顯示所有可用指令 |
 
-### 借器材格式
+除了「借器材」之外，指令中的空白都會被忽略，因此 `查器材 2025.09.11` 與 `查器材2025.09.11` 效果相同。
+
+### 借器材
+
+必須完整複製以下四行（包含「借器材」該行）：
 
 ```text
 借器材
@@ -97,356 +126,208 @@
 歸還日期：2025.09.12
 ```
 
-**注意事項：**
+注意事項：
 
-- 必須完整複製四行（包含「借器材」）
-- 器材名稱用逗號分隔
-- 日期格式必須是 `YYYY.MM.DD`
+- 器材名稱以逗號分隔，中英文逗號皆可
+- 日期格式必須是 `YYYY.MM.DD`，使用英文句點
+- 冒號可用中文「：」或英文「:」
 - 歸還日期不可早於租用日期
 
-### 查詢範例
+### 查器材
+
+查詢單日：只要租借期間涵蓋該日期（含頭尾），就會列出。
 
 ```text
 查器材 2025.09.11
 ```
 
-系統會回傳該日期所有被借用的器材和借用者：
+回覆範例：
 
 ```text
+📅 2025.09.10 ~ 2025.09.12
 **張小明**
 相機A
 三腳架
-
-**李小華**
-燈具
-收音設備
 ```
+
+查詢月份：只要租借期間與該月份有重疊，就會列出，並依租用日期排序。
+
+```text
+查器材 2025.09
+```
+
+### 我的租借與刪除
+
+傳送「我的租借」會列出你**進行中與未來**的記錄，每筆前方帶有編號：
+
+```text
+📋 張小明的租借記錄
+
+[1] 2025.09.10 ~ 2025.09.12
+相機A, 三腳架
+
+輸入「刪除 <編號>」即可刪除
+例如：刪除 1
+```
+
+接著以該編號刪除。編號對應的是「我的租借」清單中的順序，而非試算表的列號：
+
+```text
+刪除 1
+```
+
+刪除的行為取決於記錄的狀態：
+
+- **未來的記錄**（租用日期尚未到）：整筆記錄從試算表中移除。
+- **進行中的記錄**（今天落在租借期間內）：記錄保留，但歸還日期改為今天，視為提前歸還。
+- **已過期的記錄**：不會出現在清單中，因此無法操作。
+
+使用者只能操作自己的記錄。
+
+## 設定
+
+機密資訊存放在 Apps Script 的 **指令碼屬性（Script Properties）**，不在程式碼或檔案中。
+
+| 屬性名稱 | 說明 | 必填 |
+| --- | --- | --- |
+| `LINE_CHANNEL_TOKEN` | LINE Bot 的 Channel Access Token，用於回覆訊息與取得使用者名稱 | 是 |
+| `LINE_CHANNEL_SECRET` | LINE Bot 的 Channel Secret | 否 |
+
+> 關於 `LINE_CHANNEL_SECRET`：由於 Apps Script 無法取得完整的 HTTP headers，目前 `verifyLineSignature_` 會計算簽名但**不會實際比對**，一律放行。這是此部署方式的已知限制，設定此屬性目前不會提升安全性。
+
+專案根目錄的 `.env.template` 僅供本地參考，Apps Script 不會讀取這些檔案。
+
+若要調整工作表名稱、欄位順序或錯誤訊息，請修改 `src/config.js` 中的 `SHEET_LOANS`、`LOANS_HEADERS`、`UNKNOWN_CMD_MSG`。
+
+> 注意：`ensureLoansHeaders_` 在偵測到標題列與 `LOANS_HEADERS` 不一致時會清空整張工作表並重寫標題。對已有資料的正式試算表變更 `LOANS_HEADERS` 會導致資料遺失。此外，寫入是依欄位順序進行的，調整 `LOANS_HEADERS` 時必須同步調整 `borrowService.js` 中的 `appendRow`。
 
 ## 資料結構
 
-系統會在 Google Sheets 中自動建立 `loans` 工作表，包含以下欄位：
+系統會自動建立 `loans` 工作表，欄位如下：
 
-| 欄位         | 說明           | 範例                 |
-| ------------ | -------------- | -------------------- |
-| `ts`         | 建立時間戳記   | 2025-09-03 14:30:00  |
-| `userId`     | LINE 使用者 ID | U1234567890abcdef... |
-| `username`   | LINE 顯示名稱  | 張小明               |
-| `items`      | 租用器材清單   | 相機 A, 三腳架, 燈具 |
-| `borrowedAt` | 租用日期       | 2025-09-10           |
-| `returnedAt` | 歸還日期       | 2025-09-12           |
+| 欄位 | 說明 | 範例 |
+| --- | --- | --- |
+| `ts` | 建立時間戳記 | 2025-09-03 14:30:00 |
+| `userId` | LINE 使用者 ID | U1234567890abcdef... |
+| `username` | LINE 顯示名稱 | 張小明 |
+| `items` | 租用器材清單 | 相機A, 三腳架, 燈具 |
+| `borrowedAt` | 租用日期 | 2025-09-10 |
+| `returnedAt` | 歸還日期 | 2025-09-12 |
 
-## 檔案結構
+使用者輸入的「租用日期」對應 `borrowedAt`，「歸還日期」對應 `returnedAt`。
 
-重構後的專案採用模組化設計，每個檔案負責特定功能：
+## 專案結構
 
-| 檔案               | 功能說明                | 主要內容                                |
-| ------------------ | ----------------------- | --------------------------------------- |
-| `main.gs`          | 主要路由與 Webhook 處理 | doGet, doPost, handleEvent\_            |
-| `config.gs`        | 設定與常數管理          | 工作表設定、訊息常數、Script Properties |
-| `dateUtils.gs`     | 日期處理工具            | 日期解析、格式化、比較函式              |
-| `sheetService.gs`  | Google Sheets 操作      | 工作表建立、資料讀寫、標題管理          |
-| `lineService.gs`   | LINE API 通訊           | 訊息回覆、歡迎訊息、使用者資訊          |
-| `borrowService.gs` | 借用邏輯處理            | 表單解析、借用紀錄建立                  |
-| `queryService.gs`  | 查詢功能                | 日期查詢、指令說明                      |
-
-## 自訂設定
-
-### 修改工作表名稱
-
-在 `config.gs` 中：
-
-```javascript
-const SHEET_LOANS = "loans"; // 改為你想要的工作表名稱
+```text
+foufa-line-bot/
+├── src/
+│   ├── appsscript.json     # Apps Script 資訊清單（時區、執行階段、webapp 設定）
+│   ├── main.js             # Webhook 入口（doGet / doPost）與指令路由
+│   ├── config.js           # 常數與 Script Properties 讀取
+│   ├── dateUtils.js        # 日期解析、格式化與比較
+│   ├── sheetService.js     # Google Sheets 存取
+│   ├── lineService.js      # LINE API 通訊
+│   ├── borrowService.js    # 借用邏輯與表單解析
+│   ├── queryService.js     # 日期／月份／個人查詢與指令說明
+│   ├── deleteService.js    # 刪除與提前歸還邏輯
+│   └── testDebug.js        # 早期手動除錯工具，非正式功能
+├── tests/
+│   ├── unit/               # 單元測試
+│   ├── mocks/              # GAS 與 LINE API 的 mock 工具
+│   └── setup.js            # Jest 環境設定
+├── .clasp.json             # clasp 設定（scriptId、rootDir）
+├── .claspignore            # 排除不推送到 Apps Script 的檔案
+└── jest.config.js
 ```
 
-### 修改欄位順序
+各層的職責分明：`sheetService.js` 是唯一直接操作 `SpreadsheetApp` 的檔案，`lineService.js` 是唯一直接操作 `UrlFetchApp` 的檔案，其餘服務只處理商業邏輯。
 
-在 `config.gs` 中：
+`main.js` 中的 `handleEvent_` 是**唯一的指令路由**，新增指令時需要在此加上比對分支，並在對應的服務檔案中實作處理函式。
 
-```javascript
-const LOANS_HEADERS = [
-  "ts",
-  "userId",
-  "username",
-  "items",
-  "borrowedAt",
-  "returnedAt",
-];
+檔案在本地是 `.js`，clasp 推送後在 Apps Script 中會以 `.gs` 呈現。
+
+### 全域作用域
+
+Apps Script 會將 `src/` 下所有檔案合併到**同一個全域作用域**執行，因此：
+
+- 檔案之間不需要（也不能）使用 `require` / `import` / `export`，加上去會讓部署後的程式壞掉。
+- **函式名稱在整個 `src/` 中必須唯一**，同名函式會互相覆蓋而不會報錯。
+- 函式名稱結尾的底線（如 `handleEvent_`、`parseDotDate_`）是 GAS 慣例，代表私有函式，作用是不讓它出現在編輯器的「執行」下拉選單中。`doGet` / `doPost` 沒有底線，因為 GAS 必須將它們公開為網頁進入點。
+
+## 本地開發
+
+### 使用 clasp 同步程式碼
+
+```bash
+clasp push               # 推送 src/ 到 Apps Script
+clasp show-file-status   # 檢查本地與遠端差異
+clasp pull               # 拉取遠端變更
+clasp open-script        # 開啟 Apps Script 編輯器
+clasp tail-logs          # 查看執行記錄（需先設定 Project ID）
 ```
 
-### 自訂錯誤訊息
+`clasp push` 只會更新程式碼。LINE Webhook 實際呼叫的是**已部署的版本**，因此推送後仍需在 Apps Script 編輯器中建立新的部署作業，變更才會生效。
 
-在 `config.gs` 中：
+### 測試
 
-```javascript
-const UNKNOWN_CMD_MSG = "目前沒有此指令，請使用「查指令」查看指令範例";
+```bash
+pnpm test                                  # 執行所有測試
+pnpm test:unit                             # 只執行單元測試
+pnpm test:watch                            # 監看模式
+pnpm test -- tests/unit/dateUtils.test.js  # 執行單一測試檔案
 ```
+
+> **重要：測試不會載入 `src/`。** 由於 GAS 沒有模組系統，目前的測試是將受測函式**複製**一份到測試檔案中再進行測試，`tests/` 底下沒有任何程式碼讀取 `src/`。這代表修改 `src/` 中的函式後，必須同步更新對應測試檔案中的副本，否則測試仍然會通過，但驗證的是舊的行為。也因為如此，`pnpm test:coverage` 的覆蓋率永遠是 0%。
+
+以下 script 目前無法使用：
+
+- `pnpm lint` — 已安裝 ESLint，但缺少設定檔。
+- `pnpm test:integration` — `tests/integration/` 尚未建立。
+- `pnpm test:coverage` — 覆蓋率為 0%，必定低於 `jest.config.js` 中設定的 60% 門檻。
 
 ## 疑難排解
 
-### 常見問題
+**Bot 沒有回應**
 
-**Q: Bot 沒有回應？**
+- 確認 Webhook URL 指向的是最新的部署版本，且已啟用「Use webhook」
+- 確認 `LINE_CHANNEL_TOKEN` 已正確設定於指令碼屬性
+- 以瀏覽器開啟網頁應用程式網址，應顯示 `OK`
+- 執行 `clasp tail-logs` 或在編輯器中查看「執行項目」記錄
 
-- 檢查 Webhook URL 是否正確設定
-- 確認 `LINE_CHANNEL_TOKEN` 是否正確
-- 查看 Apps Script 的執行記錄是否有錯誤
+**推送後行為沒有改變**
 
-**Q: 無法寫入 Google Sheets？**
+- `clasp push` 不會更新已部署的版本，需在編輯器中建立新的部署作業
+- 執行 `clasp show-file-status` 確認沒有未推送的變更
 
-- 確認 Apps Script 有 Google Sheets 的存取權限
-- 檢查工作表名稱是否正確
+**推送時出現 "Project contents must include a manifest file named appsscript"**
 
-**Q: 日期格式錯誤？**
+- 確認 `appsscript.json` 位於 `src/` 目錄中，且 `.clasp.json` 的 `rootDir` 設為 `src`
 
-- 確保使用 `YYYY.MM.DD` 格式（例如：2025.09.03）
-- 注意是英文句點，不是中文句號
+**日期格式錯誤**
 
-### 除錯方式
+- 使用 `YYYY.MM.DD` 格式（例如 2025.09.03），注意是英文句點而非中文句號
 
-1. 在 Apps Script 編輯器中查看「執行」記錄
-2. 使用 `console.log()` 在程式碼中加入除錯訊息
-3. 測試 Web 應用程式網址是否可正常存取（應顯示 "OK"）
+**無法寫入 Google Sheets**
 
-## 開發工作流程
+- 確認 Apps Script 專案已取得試算表的存取權限（首次執行時需授權）
 
-### 使用 clasp 進行本地開發
-
-本專案使用 [clasp](https://github.com/google/clasp) 工具來管理 Google Apps Script 專案，讓你可以在本地編輯程式碼並同步到遠端。
-
-#### 安裝 clasp
-
-首先，全局安裝 clasp 工具：
-
-```bash
-npm install -g @google/clasp
-```
-
-驗證安裝成功：
-
-```bash
-clasp --version
-```
-
-#### 初始化專案
-
-如果還未設定 clasp，執行以下步驟：
-
-1. **登入 Google 帳號**：
-
-```bash
-clasp login
-```
-
-這會開啟瀏覽器進行 Google 帳號驗證。
-
-2. **複製遠端專案**（如果是新專案）：
-
-```bash
-clasp clone <scriptId>
-```
-
-將 `<scriptId>` 替換為你的 Google Apps Script 專案 ID（可在 Apps Script 編輯器的「專案設定」中找到）。
-
-3. **或初始化本地專案**（如果已有本地程式碼）：
-
-確保專案根目錄有 `.clasp.json` 檔案，內容如下：
-
-```json
-{
-  "scriptId": "你的scriptId",
-  "rootDir": "src",
-  "scriptExtensions": [".js", ".gs"],
-  "htmlExtensions": [".html"],
-  "jsonExtensions": [".json"]
-}
-```
-
-#### 推送程式碼到 Apps Script
-
-開發完成後，使用以下指令將本地程式碼推送到遠端 Apps Script 專案：
-
-```bash
-clasp push
-```
-
-**注意**：
-
-- 首次推送時，clasp 會詢問是否覆蓋遠端檔案，選擇「是」
-- 推送後，遠端的 Apps Script 編輯器會自動重新整理
-- 確保 `.claspignore` 中列出的檔案不會被推送
-
-#### 查看推送狀態
-
-檢查本地和遠端的檔案差異：
-
-```bash
-clasp show-file-status
-```
-
-#### 拉取遠端程式碼
-
-如果在 Apps Script 編輯器中直接修改了程式碼，可以拉取最新版本：
-
-```bash
-clasp pull
-```
-
-#### 開啟 Apps Script 編輯器
-
-直接在瀏覽器中開啟遠端編輯器：
-
-```bash
-clasp open-script
-```
-
-其他相關指令：
-
-- `clasp open-web-app` - 開啟 Web 應用程式
-- `clasp open-container` - 開啟容器綁定的檔案
-
-#### 查看執行記錄
-
-查看 Apps Script 的執行日誌（需要設定 Project ID）：
-
-```bash
-clasp tail-logs
-```
-
-常用選項：
-
-- `--json` - 以 JSON 格式輸出
-- `--watch` - 持續監視日誌
-- `--simplified` - 簡化輸出格式
-- `--open` - 在瀏覽器中開啟日誌頁面
-- `--setup` - 設定 Project ID
-
-### .claspignore 設定
-
-專案根目錄的 `.claspignore` 檔案用於排除不需要同步到 Apps Script 的檔案，類似於 `.gitignore`。
-
-**排除的檔案類型**：
-
-- `node_modules/` - npm 依賴套件（Apps Script 不需要）
-- `tests/` - 測試檔案（不應部署到生產環境）
-- `coverage/` - 測試覆蓋率報告
-- `.clasp.json` - clasp 設定檔（本地用）
-- `package.json` - npm 設定檔（本地用）
-- `.git/` - 版本控制檔案
-- `.vscode/` - IDE 設定
-- `README.md` - 文件檔案
-
-### 部署工作流程
-
-#### 開發流程
-
-1. **編輯本地程式碼**：
-
-   ```bash
-   # 編輯 src/ 目錄下的檔案
-   vim src/main.gs
-   ```
-
-2. **推送到 Apps Script**：
-
-   ```bash
-   clasp push
-   ```
-
-3. **在 Apps Script 編輯器中測試**：
-
-   ```bash
-   clasp open-script
-   ```
-
-4. **查看執行記錄**：
-
-   ```bash
-   clasp tail-logs
-   ```
-
-#### 部署到生產環境
-
-1. **確認所有程式碼已推送**：
-
-   ```bash
-   clasp show-file-status
-   ```
-
-2. **在 Apps Script 編輯器中建立新版本**：
-
-   - 開啟 Apps Script 編輯器：`clasp open-script`
-   - 點選「部署」→「新增部署作業」
-   - 選擇「網頁應用程式」類型
-   - 設定執行身分和存取權限
-   - 點選「部署」
-
-3. **複製 Webhook URL**：
-   - 部署完成後，複製 Web 應用程式網址
-   - 在 LINE Developers Console 中更新 Webhook URL
-
-#### 常見工作流程命令
-
-```bash
-# 登入
-clasp login
-
-# 查看推送狀態
-clasp show-file-status
-
-# 推送程式碼
-clasp push
-
-# 拉取遠端程式碼
-clasp pull
-
-# 開啟編輯器
-clasp open-script
-
-# 查看日誌
-clasp tail-logs
-
-# 列出所有部署
-clasp list-deployments
-
-# 建立新版本
-clasp create-version "版本說明"
-```
-
-### 疑難排解
-
-**Q: 推送時出現 "Project contents must include a manifest file named appsscript"？**
-
-- 確保 `appsscript.json` 在 `src/` 目錄中
-- 檢查 `.clasp.json` 中的 `rootDir` 設定是否正確
-
-**Q: 推送後程式碼沒有更新？**
-
-- 執行 `clasp show-file-status` 檢查是否有未推送的變更
-- 確認 `.claspignore` 沒有排除你要推送的檔案
-- 嘗試執行 `clasp push --force` 強制推送
-
-**Q: 無法登入 Google 帳號？**
-
-- 清除登入快取：`clasp logout`
-- 重新登入：`clasp login`
-- 確保使用的是擁有 Apps Script 專案的 Google 帳號
-
-**Q: 如何切換不同的 Google 帳號？**
+**切換 Google 帳號**
 
 ```bash
 clasp logout
 clasp login
 ```
 
-## 授權條款
-
-本專案採用 MIT 授權條款，歡迎自由使用和修改。
-
 ## 貢獻
 
-歡迎提交 Issue 和 Pull Request 來改善這個專案！
+歡迎提交 Issue 與 Pull Request。
 
----
+1. Fork 此專案
+2. 建立功能分支（`git checkout -b feature/your-feature`）
+3. 修改程式碼，並同步更新 `tests/unit/` 中對應的函式副本（見[測試](#測試)）
+4. 執行 `pnpm test` 確認測試通過
+5. 推送分支並開啟 Pull Request
 
-提示：這個系統特別適合攝影工作室、學校社團、或任何需要管理共用器材的團隊使用。
+## 授權條款
+
+本專案採用 [MIT](LICENSE) 授權條款。
