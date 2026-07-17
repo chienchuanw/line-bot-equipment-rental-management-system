@@ -82,13 +82,118 @@ function parseBorrowMessage_(raw) {
   };
 }
 
+/**
+ * 將日期加上指定天數（從 src/dateUtils.js 複製）
+ */
+function addDays_(d, n) {
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x;
+}
+
+/**
+ * 取得 Script Properties 中的設定值（從 src/config.js 複製）
+ */
+function getProp_(key) {
+  return PropertiesService.getScriptProperties().getProperty(key);
+}
+
+/**
+ * 解析使用者的顯示名稱（從 src/userService.js 複製）
+ */
+function resolveDisplayName_(userId, fallbackUsername, nameMap) {
+  const map = nameMap || {};
+  const uid = String(userId || '').trim();
+
+  if (uid && map[uid]) return map[uid];
+  return fallbackUsername || userId || '';
+}
+
+/**
+ * 取得 userId → displayName 的對照表（從 src/sheetService.js 複製）
+ */
+function getUserDisplayNameMap_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('users');
+  if (!sheet) return {};
+
+  const rng = sheet.getDataRange().getValues();
+  if (!rng || rng.length < 2) return {};
+
+  const header = rng.shift().map(String);
+  const idIdx = header.indexOf('userId');
+  const nameIdx = header.indexOf('displayName');
+  if (idIdx === -1 || nameIdx === -1) return {};
+
+  const map = {};
+  rng.forEach(row => {
+    const uid = String(row[idIdx] || '').trim();
+    const name = String(row[nameIdx] || '').trim();
+    if (uid && name) map[uid] = name;
+  });
+  return map;
+}
+
+/**
+ * 更新特定記錄的 eventId（從 src/sheetService.js 複製）
+ */
+function updateRecordEventId_(sheet, rowIndex, eventId) {
+  try {
+    const header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const eventIdIndex = header.indexOf('eventId');
+
+    if (eventIdIndex === -1) {
+      console.error('找不到 eventId 欄位');
+      return false;
+    }
+
+    sheet.getRange(rowIndex, eventIdIndex + 1).setValue(eventId);
+    return true;
+  } catch (error) {
+    console.error('回寫 eventId 時發生錯誤:', error);
+    return false;
+  }
+}
+
+/**
+ * 取得器材租借用的目標日曆（從 src/calendarService.js 複製）
+ */
+function getRentalCalendar_() {
+  const calendarId = getProp_('CALENDAR_ID');
+  if (!calendarId) return null;
+
+  const calendar = CalendarApp.getCalendarById(calendarId);
+  if (!calendar) {
+    console.error('找不到日曆，請確認 CALENDAR_ID 正確且已分享給此帳號', calendarId);
+    throw new Error(`找不到日曆：${calendarId}`);
+  }
+  return calendar;
+}
+
+/**
+ * 建立器材租借的整天事件（從 src/calendarService.js 複製）
+ */
+function createRentalEvent_(record) {
+  const calendar = getRentalCalendar_();
+  if (!calendar) return null;
+
+  const title = `${record.displayName}｜${record.items}`;
+  const start = startOfDay_(record.borrowedAt);
+  const end = addDays_(startOfDay_(record.returnedAt), 1);
+
+  const event = calendar.createAllDayEvent(title, start, end);
+  return event.getId();
+}
+
 // Mock 全域函式
 let mockReplyMessage;
 let mockGetLoansSheet;
 let mockFetchLineDisplayName;
 
 /**
- * 處理借器材表單訊息
+ * 處理借器材表單訊息（從 src/borrowService.js 複製）
+ *
+ * 順序：寫入 → 回覆使用者 → 最後才碰日曆
  */
 function handleBorrowForm_(event, rawText, userId) {
   const loans = mockGetLoansSheet();
@@ -109,7 +214,9 @@ function handleBorrowForm_(event, rawText, userId) {
     parsed.returnedAt,
     ''                  // eventId ← 建立日曆事件後回寫
   ]);
+  const rowIndex = loans.getLastRow();
 
+  // 回覆確認訊息（必須在碰日曆之前，否則日曆一爆使用者就石沉大海）
   mockReplyMessage(event.replyToken,
     [
       '✅ 已建立借用紀錄：',
@@ -119,6 +226,33 @@ function handleBorrowForm_(event, rawText, userId) {
       `歸還日期：${formatDotDate_(parsed.returnedAt)}`
     ].join('\n')
   );
+
+  // 日曆同步：失敗時例外往上拋，使用者無感，script owner 收到通知信
+  syncNewLoanToCalendar_(loans, rowIndex, {
+    userId,
+    username,
+    items: parsed.items,
+    borrowedAt: parsed.borrowedAt,
+    returnedAt: parsed.returnedAt
+  });
+}
+
+/**
+ * 將新的借用紀錄同步到 Google 日曆並回寫 eventId（從 src/borrowService.js 複製）
+ */
+function syncNewLoanToCalendar_(loans, rowIndex, record) {
+  // 日曆是給別人看的共用視圖，故套用 users 對照表的名稱而非 LINE 暱稱
+  const displayName = resolveDisplayName_(record.userId, record.username, getUserDisplayNameMap_());
+
+  const eventId = createRentalEvent_({
+    displayName,
+    items: record.items,
+    borrowedAt: record.borrowedAt,
+    returnedAt: record.returnedAt
+  });
+
+  // eventId 為 null 代表 CALENDAR_ID 未設定（功能關閉），不需回寫
+  if (eventId) updateRecordEventId_(loans, rowIndex, eventId);
 }
 
 // ==================== 測試開始 ====================
@@ -308,6 +442,144 @@ describe('borrowService - handleBorrowForm_', () => {
         expect.stringContaining('日期邏輯錯誤')
       );
       expect(env.loansSheet.appendRow).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('日曆同步', () => {
+    const CAL_ID = 'foufa@group.calendar.google.com';
+    const USER = mockUsers.user1.userId;
+
+    /**
+     * 以指定選項重建測試環境（beforeEach 的環境沒有日曆）
+     */
+    function setupEnv(options = {}) {
+      const userProfiles = { [USER]: '阿明🌀' };
+      env = setupTestEnvironment({
+        userProfiles,
+        properties: { LINE_CHANNEL_TOKEN: 'mock-channel-token', ...options.properties },
+        calendarId: options.calendarId || null,
+        userRows: options.userRows || null
+      });
+      mockGetLoansSheet = jest.fn(() => env.loansSheet);
+      mockFetchLineDisplayName = jest.fn((userId) => userProfiles[userId] || null);
+      return env;
+    }
+
+    test('借用成功時應該建立日曆事件並回寫 eventId', () => {
+      setupEnv({ properties: { CALENDAR_ID: CAL_ID }, calendarId: CAL_ID });
+      const event = { replyToken: 'test-token' };
+
+      handleBorrowForm_(event, mockBorrowMessages.validSingleItem, USER);
+
+      expect(env.calendar.createAllDayEvent).toHaveBeenCalledTimes(1);
+      // eventId 應該回寫到第 2 列（第 1 列是表頭）的第 7 欄
+      expect(env.loansSheet._getData()[1][6]).toBe('evt-1@google.com');
+    });
+
+    test('事件的日期範圍應該正確且結束日為排他', () => {
+      setupEnv({ properties: { CALENDAR_ID: CAL_ID }, calendarId: CAL_ID });
+      const event = { replyToken: 'test-token' };
+
+      // validSingleItem 為 2025.09.10 ~ 2025.09.12
+      handleBorrowForm_(event, mockBorrowMessages.validSingleItem, USER);
+
+      const [, start, end] = env.calendar.createAllDayEvent.mock.calls[0];
+      expect(start.getDate()).toBe(10);
+      expect(end.getDate()).toBe(13); // 12 + 1，排他
+    });
+
+    test('事件標題應該套用 users 對照表的名稱而非 LINE 暱稱', () => {
+      setupEnv({
+        properties: { CALENDAR_ID: CAL_ID },
+        calendarId: CAL_ID,
+        userRows: [[USER, '張小明']]
+      });
+      const event = { replyToken: 'test-token' };
+
+      handleBorrowForm_(event, mockBorrowMessages.validSingleItem, USER);
+
+      const [title] = env.calendar.createAllDayEvent.mock.calls[0];
+      expect(title).toBe('張小明｜相機A');
+    });
+
+    test('未登錄在對照表的使用者事件標題應該退回 LINE 暱稱', () => {
+      setupEnv({ properties: { CALENDAR_ID: CAL_ID }, calendarId: CAL_ID });
+      const event = { replyToken: 'test-token' };
+
+      handleBorrowForm_(event, mockBorrowMessages.validSingleItem, USER);
+
+      const [title] = env.calendar.createAllDayEvent.mock.calls[0];
+      expect(title).toBe('阿明🌀｜相機A');
+    });
+
+    test('sheet 的 username 欄位仍應該保留 LINE 暱稱原值（借用當下的快照）', () => {
+      setupEnv({
+        properties: { CALENDAR_ID: CAL_ID },
+        calendarId: CAL_ID,
+        userRows: [[USER, '張小明']]
+      });
+      const event = { replyToken: 'test-token' };
+
+      handleBorrowForm_(event, mockBorrowMessages.validSingleItem, USER);
+
+      // 對照表只影響顯示層，不該覆寫原始快照
+      expect(env.loansSheet._getData()[1][2]).toBe('阿明🌀');
+    });
+
+    test('CALENDAR_ID 未設定時應該正常完成借用且不建立事件', () => {
+      setupEnv({});
+      const event = { replyToken: 'test-token' };
+
+      expect(() => handleBorrowForm_(event, mockBorrowMessages.validSingleItem, USER)).not.toThrow();
+
+      expect(env.loansSheet._getData()[1][1]).toBe(USER);
+      expect(env.loansSheet._getData()[1][6]).toBe('');
+    });
+
+    test('日曆爆掉時使用者仍應該先收到成功回覆，例外才往上拋', () => {
+      setupEnv({ properties: { CALENDAR_ID: CAL_ID }, calendarId: CAL_ID });
+      env.calendar.createAllDayEvent = jest.fn(() => {
+        throw new Error('Calendar service error');
+      });
+      const event = { replyToken: 'test-token' };
+
+      // 例外往上拋 → Apps Script 會寄失敗通知信給 script owner
+      expect(() => handleBorrowForm_(event, mockBorrowMessages.validSingleItem, USER))
+        .toThrow('Calendar service error');
+
+      // 但紀錄已成立
+      expect(env.loansSheet._getData()[1][1]).toBe(USER);
+      // 且使用者已經收到成功回覆（回覆在碰日曆之前）
+      expect(mockReplyMessage).toHaveBeenCalledWith(
+        'test-token',
+        expect.stringContaining('✅ 已建立借用紀錄')
+      );
+    });
+
+    test('CALENDAR_ID 打錯時應該拋錯而非靜默跳過', () => {
+      setupEnv({ properties: { CALENDAR_ID: '打錯的ID' }, calendarId: CAL_ID });
+      jest.spyOn(console, 'error').mockImplementation(() => { });
+      const event = { replyToken: 'test-token' };
+
+      expect(() => handleBorrowForm_(event, mockBorrowMessages.validSingleItem, USER))
+        .toThrow('找不到日曆');
+
+      // 紀錄仍成立，使用者仍收到回覆
+      expect(env.loansSheet._getData()[1][1]).toBe(USER);
+      expect(mockReplyMessage).toHaveBeenCalledWith(
+        'test-token',
+        expect.stringContaining('✅ 已建立借用紀錄')
+      );
+    });
+
+    test('users 分頁不存在時應該正常建立事件並使用 LINE 暱稱', () => {
+      setupEnv({ properties: { CALENDAR_ID: CAL_ID }, calendarId: CAL_ID });
+      const event = { replyToken: 'test-token' };
+
+      expect(() => handleBorrowForm_(event, mockBorrowMessages.validSingleItem, USER)).not.toThrow();
+
+      const [title] = env.calendar.createAllDayEvent.mock.calls[0];
+      expect(title).toBe('阿明🌀｜相機A');
     });
   });
 });

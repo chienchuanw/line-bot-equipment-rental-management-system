@@ -5,6 +5,15 @@
 
 /**
  * 處理借器材表單訊息
+ *
+ * 執行順序是刻意設計的：寫入 → 回覆使用者 → 最後才碰日曆。
+ *
+ * 1. 先回覆再碰日曆：本函式沒有 try/catch，若日曆呼叫在回覆之前拋錯，
+ *    使用者在 LINE 那端會完全等不到回應（石沉大海）。
+ * 2. 日曆同步刻意不加 try/catch：loans 是唯一真實來源，日曆只是鏡像，
+ *    日曆故障不該擋下借器材。例外往上拋，Apps Script 內建機制會自動寄
+ *    失敗通知信給 script owner，使用者則完全無感。
+ *
  * @param {Object} event - LINE 事件物件
  * @param {string} rawText - 原始訊息文字
  * @param {string} userId - 使用者 ID
@@ -30,8 +39,9 @@ function handleBorrowForm_(event, rawText, userId) {
     parsed.returnedAt,  // returnedAt ← 歸還日期
     ''                  // eventId ← 建立日曆事件後回寫
   ]);
+  const rowIndex = loans.getLastRow();
 
-  // 回覆確認訊息
+  // 回覆確認訊息（必須在碰日曆之前，否則日曆一爆使用者就石沉大海）
   replyMessage_(event.replyToken,
     [
       '✅ 已建立借用紀錄：',
@@ -41,6 +51,36 @@ function handleBorrowForm_(event, rawText, userId) {
       `歸還日期：${formatDotDate_(parsed.returnedAt)}`
     ].join('\n')
   );
+
+  // 日曆同步：失敗時例外往上拋，使用者無感，script owner 收到通知信
+  syncNewLoanToCalendar_(loans, rowIndex, {
+    userId,
+    username,
+    items: parsed.items,
+    borrowedAt: parsed.borrowedAt,
+    returnedAt: parsed.returnedAt
+  });
+}
+
+/**
+ * 將新的借用紀錄同步到 Google 日曆並回寫 eventId
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} loans - 借用紀錄工作表
+ * @param {number} rowIndex - 該紀錄的列號（1-based）
+ * @param {Object} record - { userId, username, items, borrowedAt, returnedAt }
+ */
+function syncNewLoanToCalendar_(loans, rowIndex, record) {
+  // 日曆是給別人看的共用視圖，故套用 users 對照表的名稱而非 LINE 暱稱
+  const displayName = resolveDisplayName_(record.userId, record.username, getUserDisplayNameMap_());
+
+  const eventId = createRentalEvent_({
+    displayName,
+    items: record.items,
+    borrowedAt: record.borrowedAt,
+    returnedAt: record.returnedAt
+  });
+
+  // eventId 為 null 代表 CALENDAR_ID 未設定（功能關閉），不需回寫
+  if (eventId) updateRecordEventId_(loans, rowIndex, eventId);
 }
 
 /**
