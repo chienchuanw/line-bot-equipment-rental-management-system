@@ -17,6 +17,9 @@ function replyBorrowedOnDate_(replyToken, ymdDot) {
 
   const rows = getLoanRows_(loans);
 
+  // 一次請求只讀一次 users 分頁，不要每列都讀
+  const nameMap = getUserDisplayNameMap_();
+
   // 篩選規則：若「租用日期（borrowedAt）」<= target <=「歸還日期（returnedAt）」即視為該日占用中
   const list = rows.filter(r => {
     const rentStart = toDateOrNull_(r.borrowedAt); // 租用日期（borrowedAt）
@@ -31,8 +34,9 @@ function replyBorrowedOnDate_(replyToken, ymdDot) {
   }
 
   // 格式化回覆訊息：粗體 username，逐項器材換行顯示
+  // 查器材是群組共用視圖，故套用 users 對照表讓別人認得出是誰
   const msg = list.map(r => {
-    const username = r.username || r.userId;
+    const username = resolveDisplayName_(r.userId, r.username, nameMap);
 
     // 把 items 用 , 或 ， 分隔後逐行顯示
     const itemsArr = String(r.items || '').split(/[，,]/).map(s => s.trim()).filter(Boolean);
@@ -63,6 +67,9 @@ function replyBorrowedOnMonth_(replyToken, ymDot) {
 
   const rows = getLoanRows_(loans);
 
+  // 一次請求只讀一次 users 分頁，不要每列都讀
+  const nameMap = getUserDisplayNameMap_();
+
   // 篩選規則：租借期間與指定月份有重疊的記錄
   const list = rows.filter(r => {
     const rentStart = toDateOrNull_(r.borrowedAt); // 租用日期
@@ -92,8 +99,9 @@ function replyBorrowedOnMonth_(replyToken, ymDot) {
 
   // 格式化回覆訊息
   const monthText = `${monthInfo.year} / ${monthInfo.month} 器材租借`;
+  // 同上：共用視圖套用對照表
   const msg = list.map(r => {
-    const username = r.username || r.userId;
+    const username = resolveDisplayName_(r.userId, r.username, nameMap);
 
     // 把 items 用 , 或 ， 分隔後逐行顯示
     const itemsArr = String(r.items || '').split(/[，,]/).map(s => s.trim()).filter(Boolean);
