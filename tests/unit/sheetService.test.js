@@ -31,6 +31,7 @@ describe('sheetService', () => {
 
     global.SpreadsheetApp = mockSpreadsheetApp;
     global.SHEET_LOANS = 'loans';
+    global.SHEET_USERS = 'users';
     global.LOANS_HEADERS = ['ts', 'userId', 'username', 'items', 'borrowedAt', 'returnedAt', 'eventId'];
   });
 
@@ -437,6 +438,121 @@ describe('sheetService', () => {
       const result = updateRecordEventId_(sheet, 2, 'evt-1@google.com');
 
       expect(result).toBe(false);
+    });
+  });
+
+  describe('getUserDisplayNameMap_ - 讀取顯示名稱對照表', () => {
+    /**
+     * 取得 userId → displayName 的對照表
+     */
+    function getUserDisplayNameMap_() {
+      const ss = SpreadsheetApp.getActiveSpreadsheet();
+      const sheet = ss.getSheetByName(SHEET_USERS);
+      if (!sheet) return {};
+
+      const rng = sheet.getDataRange().getValues();
+      if (!rng || rng.length < 2) return {};
+
+      const header = rng.shift().map(String);
+      const idIdx = header.indexOf('userId');
+      const nameIdx = header.indexOf('displayName');
+      if (idIdx === -1 || nameIdx === -1) return {};
+
+      const map = {};
+      rng.forEach(row => {
+        const uid = String(row[idIdx] || '').trim();
+        const name = String(row[nameIdx] || '').trim();
+        if (uid && name) map[uid] = name;
+      });
+      return map;
+    }
+
+    /**
+     * 以指定的 users 分頁資料重建測試環境
+     */
+    function withUserRows(userRows) {
+      env = setupTestEnvironment({ userRows });
+      global.SpreadsheetApp = { getActiveSpreadsheet: jest.fn(() => env.spreadsheet) };
+    }
+
+    test('應該讀出對照表', () => {
+      withUserRows([
+        ['U1111111111111111', '張小明'],
+        ['U2222222222222222', '李小華']
+      ]);
+
+      expect(getUserDisplayNameMap_()).toEqual({
+        U1111111111111111: '張小明',
+        U2222222222222222: '李小華'
+      });
+    });
+
+    test('users 分頁不存在時應該回傳空物件而非拋錯', () => {
+      // 這張表壞掉或還沒建立，都不該讓 bot 停擺
+      env = setupTestEnvironment({});
+      global.SpreadsheetApp = { getActiveSpreadsheet: jest.fn(() => env.spreadsheet) };
+
+      expect(getUserDisplayNameMap_()).toEqual({});
+    });
+
+    test('只有表頭沒有資料時應該回傳空物件', () => {
+      withUserRows([]);
+
+      expect(getUserDisplayNameMap_()).toEqual({});
+    });
+
+    test('displayName 為空的列應該被跳過', () => {
+      withUserRows([
+        ['U1111111111111111', '張小明'],
+        ['U2222222222222222', '']
+      ]);
+
+      expect(getUserDisplayNameMap_()).toEqual({ U1111111111111111: '張小明' });
+    });
+
+    test('userId 為空的列應該被跳過', () => {
+      withUserRows([
+        ['U1111111111111111', '張小明'],
+        ['', '孤兒名字']
+      ]);
+
+      expect(getUserDisplayNameMap_()).toEqual({ U1111111111111111: '張小明' });
+    });
+
+    test('userId 重複時後者應該覆蓋前者', () => {
+      withUserRows([
+        ['U1111111111111111', '舊名字'],
+        ['U1111111111111111', '新名字']
+      ]);
+
+      expect(getUserDisplayNameMap_()).toEqual({ U1111111111111111: '新名字' });
+    });
+
+    test('應該自動去除前後空白', () => {
+      withUserRows([['  U1111111111111111  ', '  張小明  ']]);
+
+      expect(getUserDisplayNameMap_()).toEqual({ U1111111111111111: '張小明' });
+    });
+
+    test('表頭缺少必要欄位時應該回傳空物件而非拋錯', () => {
+      env = setupTestEnvironment({});
+      const brokenSheet = createMockSheet('users', [['id', 'name'], ['U111', '張小明']]);
+      env.spreadsheet.getSheetByName = jest.fn((name) => (name === 'users' ? brokenSheet : null));
+      global.SpreadsheetApp = { getActiveSpreadsheet: jest.fn(() => env.spreadsheet) };
+
+      expect(getUserDisplayNameMap_()).toEqual({});
+    });
+
+    test('欄位順序對調時仍應該正確讀取（靠欄位名而非位置）', () => {
+      env = setupTestEnvironment({});
+      const swapped = createMockSheet('users', [
+        ['displayName', 'userId'],
+        ['張小明', 'U1111111111111111']
+      ]);
+      env.spreadsheet.getSheetByName = jest.fn((name) => (name === 'users' ? swapped : null));
+      global.SpreadsheetApp = { getActiveSpreadsheet: jest.fn(() => env.spreadsheet) };
+
+      expect(getUserDisplayNameMap_()).toEqual({ U1111111111111111: '張小明' });
     });
   });
 
