@@ -70,6 +70,42 @@ function getLoanRows_(sheet) {
 }
 
 // Mock 全域函式
+/**
+ * 解析使用者的顯示名稱（從 src/userService.js 複製）
+ */
+function resolveDisplayName_(userId, fallbackUsername, nameMap) {
+  const map = nameMap || {};
+  const uid = String(userId || '').trim();
+
+  if (uid && map[uid]) return map[uid];
+  return fallbackUsername || userId || '';
+}
+
+/**
+ * 取得 userId → displayName 的對照表（從 src/sheetService.js 複製）
+ */
+function getUserDisplayNameMap_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('users');
+  if (!sheet) return {};
+
+  const rng = sheet.getDataRange().getValues();
+  if (!rng || rng.length < 2) return {};
+
+  const header = rng.shift().map(String);
+  const idIdx = header.indexOf('userId');
+  const nameIdx = header.indexOf('displayName');
+  if (idIdx === -1 || nameIdx === -1) return {};
+
+  const map = {};
+  rng.forEach(row => {
+    const uid = String(row[idIdx] || '').trim();
+    const name = String(row[nameIdx] || '').trim();
+    if (uid && name) map[uid] = name;
+  });
+  return map;
+}
+
 let mockReplyMessage;
 let mockGetLoansSheet;
 let mockFetchLineDisplayName;
@@ -84,6 +120,9 @@ function replyBorrowedOnDate_(replyToken, ymdDot) {
 
   const rows = getLoanRows_(loans);
 
+  // 一次請求只讀一次 users 分頁，不要每列都讀
+  const nameMap = getUserDisplayNameMap_();
+
   const list = rows.filter(r => {
     const rentStart = toDateOrNull_(r.borrowedAt);
     const rentEnd = toDateOrNull_(r.returnedAt);
@@ -96,8 +135,9 @@ function replyBorrowedOnDate_(replyToken, ymdDot) {
     return mockReplyMessage(replyToken, '暫無借用資訊，請確認工作室是否有拍攝。');
   }
 
+  // 查器材是群組共用視圖，故套用 users 對照表讓別人認得出是誰
   const msg = list.map(r => {
-    const username = r.username || r.userId;
+    const username = resolveDisplayName_(r.userId, r.username, nameMap);
     const itemsArr = String(r.items || '').split(/[，,]/).map(s => s.trim()).filter(Boolean);
     const itemsBlock = itemsArr.length ? itemsArr.join('\n') : '（無器材資料）';
     const rentStart = formatDotDate_(toDateOrNull_(r.borrowedAt));
@@ -117,6 +157,9 @@ function replyBorrowedOnMonth_(replyToken, ymDot) {
   if (!monthInfo) return mockReplyMessage(replyToken, '月份格式錯誤，請用 YYYY.MM');
 
   const rows = getLoanRows_(loans);
+
+  // 一次請求只讀一次 users 分頁，不要每列都讀
+  const nameMap = getUserDisplayNameMap_();
 
   const list = rows.filter(r => {
     const rentStart = toDateOrNull_(r.borrowedAt);
@@ -143,8 +186,9 @@ function replyBorrowedOnMonth_(replyToken, ymDot) {
   });
 
   const monthText = `${monthInfo.year} / ${monthInfo.month} 器材租借`;
+  // 同上：共用視圖套用對照表
   const msg = list.map(r => {
-    const username = r.username || r.userId;
+    const username = resolveDisplayName_(r.userId, r.username, nameMap);
     const itemsArr = String(r.items || '').split(/[，,]/).map(s => s.trim()).filter(Boolean);
     const itemsBlock = itemsArr.length ? itemsArr.join('\n') : '（無器材資料）';
     const rentStart = formatDotDate_(toDateOrNull_(r.borrowedAt));
@@ -590,6 +634,153 @@ describe('queryService', () => {
 
       expect(text).toContain('YYYY.MM.DD');
       expect(text).toContain('YYYY.MM');
+    });
+  });
+
+  describe('顯示名稱對照表', () => {
+    const USER = 'U1111111111111111';
+
+    /**
+     * 以指定的 users 分頁資料重建測試環境
+     */
+    function setupEnv(userRows) {
+      env = setupTestEnvironment({
+        loanRecords: [
+          createMockLoanRecord({
+            userId: USER,
+            username: '阿明🌀',
+            items: mockEquipment.camera,
+            borrowedAt: createDate(2025, 9, 11),
+            returnedAt: createDate(2025, 9, 13)
+          })
+        ],
+        userRows
+      });
+      mockGetLoansSheet = jest.fn(() => env.loansSheet);
+      mockReplyMessage = jest.fn();
+      return env;
+    }
+
+    test('查器材（日）應該顯示對照表的名稱而非 LINE 暱稱', () => {
+      setupEnv([[USER, '張小明']]);
+
+      replyBorrowedOnDate_('test-token', '2025.09.11');
+
+      const [, msg] = mockReplyMessage.mock.calls[0];
+      expect(msg).toContain('張小明');
+      expect(msg).not.toContain('阿明🌀');
+    });
+
+    test('查器材（月）也應該套用對照表', () => {
+      setupEnv([[USER, '張小明']]);
+
+      replyBorrowedOnMonth_('test-token', '2025.09');
+
+      const [, msg] = mockReplyMessage.mock.calls[0];
+      expect(msg).toContain('張小明');
+      expect(msg).not.toContain('阿明🌀');
+    });
+
+    test('未命中對照表時應該顯示 username', () => {
+      setupEnv([['U9999999999999999', '別人']]);
+
+      replyBorrowedOnDate_('test-token', '2025.09.11');
+
+      const [, msg] = mockReplyMessage.mock.calls[0];
+      expect(msg).toContain('阿明🌀');
+    });
+
+    test('users 分頁不存在時應該正常顯示 username 而非爆炸', () => {
+      setupEnv(null);
+
+      expect(() => replyBorrowedOnDate_('test-token', '2025.09.11')).not.toThrow();
+
+      const [, msg] = mockReplyMessage.mock.calls[0];
+      expect(msg).toContain('阿明🌀');
+    });
+
+    test('使用者改了 LINE 暱稱後，既有紀錄的顯示也應該跟著正名', () => {
+      // 解析發生在顯示層，故舊紀錄裡的暱稱快照不影響顯示結果
+      env = setupTestEnvironment({
+        loanRecords: [
+          createMockLoanRecord({
+            userId: USER,
+            username: '阿明',      // 舊紀錄的暱稱快照
+            items: mockEquipment.camera,
+            borrowedAt: createDate(2025, 9, 11),
+            returnedAt: createDate(2025, 9, 11)
+          }),
+          createMockLoanRecord({
+            userId: USER,
+            username: '明哥🔥',    // 新紀錄的暱稱快照
+            items: mockEquipment.tripod,
+            borrowedAt: createDate(2025, 9, 11),
+            returnedAt: createDate(2025, 9, 11)
+          })
+        ],
+        userRows: [[USER, '張小明']]
+      });
+      mockGetLoansSheet = jest.fn(() => env.loansSheet);
+      mockReplyMessage = jest.fn();
+
+      replyBorrowedOnDate_('test-token', '2025.09.11');
+
+      const [, msg] = mockReplyMessage.mock.calls[0];
+      expect(msg).not.toContain('阿明');
+      expect(msg).not.toContain('明哥🔥');
+      expect(msg.match(/張小明/g)).toHaveLength(2);
+    });
+
+    test('一次查詢只應該讀一次 users 分頁（不可每列都讀）', () => {
+      env = setupTestEnvironment({
+        loanRecords: [
+          createMockLoanRecord({
+            userId: USER,
+            username: '阿明🌀',
+            borrowedAt: createDate(2025, 9, 11),
+            returnedAt: createDate(2025, 9, 11)
+          }),
+          createMockLoanRecord({
+            userId: 'U2222222222222222',
+            username: '阿華',
+            borrowedAt: createDate(2025, 9, 11),
+            returnedAt: createDate(2025, 9, 11)
+          })
+        ],
+        userRows: [[USER, '張小明']]
+      });
+      mockGetLoansSheet = jest.fn(() => env.loansSheet);
+      mockReplyMessage = jest.fn();
+
+      replyBorrowedOnDate_('test-token', '2025.09.11');
+
+      const usersCalls = env.spreadsheet.getSheetByName.mock.calls.filter(([name]) => name === 'users');
+      expect(usersCalls).toHaveLength(1);
+    });
+
+    test('我的租借刻意不套用對照表（那是使用者看自己的畫面）', () => {
+      // 我的租借只列出 returnedAt >= today 的紀錄，故必須用未來日期
+      env = setupTestEnvironment({
+        loanRecords: [
+          createMockLoanRecord({
+            userId: USER,
+            username: '阿明🌀',
+            items: mockEquipment.camera,
+            borrowedAt: createDate(2099, 12, 1),
+            returnedAt: createDate(2099, 12, 3)
+          })
+        ],
+        userRows: [[USER, '張小明']]
+      });
+      mockGetLoansSheet = jest.fn(() => env.loansSheet);
+      mockReplyMessage = jest.fn();
+      mockFetchLineDisplayName = jest.fn(() => '阿明🌀');
+
+      replyMyBorrowRecords_('test-token', USER);
+
+      const [, msg] = mockReplyMessage.mock.calls[0];
+      expect(msg).toContain('阿明🌀');
+      expect(msg).not.toContain('張小明');
     });
   });
 });
