@@ -15,6 +15,7 @@ global.SpreadsheetApp = undefined;
 global.PropertiesService = undefined;
 global.UrlFetchApp = undefined;
 global.ContentService = undefined;
+global.CalendarApp = undefined;
 global.Logger = {
   log: jest.fn()
 };

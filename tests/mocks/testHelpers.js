@@ -18,6 +18,11 @@ const {
   createMockLineReplyResponse
 } = require('./mockLineAPI');
 
+const {
+  createMockCalendar,
+  createMockCalendarApp
+} = require('./mockCalendar');
+
 const { loanRecordsToSheetData } = require('./fixtures');
 
 /**
@@ -28,31 +33,52 @@ const { loanRecordsToSheetData } = require('./fixtures');
 function setupGASEnvironment(options = {}) {
   const {
     sheetData = [],
+    userSheetData = null,
     properties = {},
-    urlResponses = {}
+    urlResponses = {},
+    calendarId = null,
+    calendarEvents = {}
   } = options;
 
   // 建立 Mock Sheet
   const loansSheet = createMockSheet('loans', sheetData);
-  const spreadsheet = createMockSpreadsheet({ loans: loansSheet });
+
+  // users 分頁為選配：不傳 userSheetData 就代表該分頁不存在
+  // （getSheetByName('users') 會回傳 null，對應正式環境未建立該分頁的情況）
+  const sheets = { loans: loansSheet };
+  let usersSheet = null;
+  if (userSheetData) {
+    usersSheet = createMockSheet('users', userSheetData);
+    sheets.users = usersSheet;
+  }
+
+  const spreadsheet = createMockSpreadsheet(sheets);
   const SpreadsheetApp = createMockSpreadsheetApp(spreadsheet);
-  
+
   // 建立 Mock PropertiesService
   const PropertiesService = createMockPropertiesService(properties);
-  
+
   // 建立 Mock UrlFetchApp
   const UrlFetchApp = createMockUrlFetchApp(urlResponses);
+
+  // 建立 Mock CalendarApp：calendarId 為 null 代表沒有任何可用日曆
+  const calendar = calendarId ? createMockCalendar(calendarId, calendarEvents) : null;
+  const CalendarApp = createMockCalendarApp(calendarId ? { [calendarId]: calendar } : {});
 
   // 設定為全域變數（模擬 GAS 環境）
   global.SpreadsheetApp = SpreadsheetApp;
   global.PropertiesService = PropertiesService;
   global.UrlFetchApp = UrlFetchApp;
+  global.CalendarApp = CalendarApp;
 
   return {
     SpreadsheetApp,
     PropertiesService,
     UrlFetchApp,
+    CalendarApp,
     loansSheet,
+    usersSheet,
+    calendar,
     spreadsheet
   };
 }
@@ -64,6 +90,7 @@ function cleanupGASEnvironment() {
   global.SpreadsheetApp = undefined;
   global.PropertiesService = undefined;
   global.UrlFetchApp = undefined;
+  global.CalendarApp = undefined;
 }
 
 /**
@@ -106,20 +133,32 @@ function setupTestEnvironment(options = {}) {
     properties = {
       LINE_CHANNEL_TOKEN: 'mock-channel-token'
     },
-    userProfiles = {}
+    userProfiles = {},
+    userRows = null,
+    calendarId = null,
+    calendarEvents = {}
   } = options;
 
   // 轉換租借記錄為 Sheet 資料格式
   const sheetData = loanRecordsToSheetData(loanRecords);
-  
+
+  // userRows 格式為 [[userId, displayName], ...]
+  // 不傳代表 users 分頁不存在（正式環境未建立該分頁時的預設狀態）
+  const userSheetData = userRows
+    ? [['userId', 'displayName'], ...userRows]
+    : null;
+
   // 設定 LINE API 環境
   const lineEnv = setupLineAPIEnvironment({ userProfiles });
-  
+
   // 設定 GAS 環境
   const gasEnv = setupGASEnvironment({
     sheetData,
+    userSheetData,
     properties,
-    urlResponses: lineEnv.urlResponses
+    urlResponses: lineEnv.urlResponses,
+    calendarId,
+    calendarEvents
   });
 
   return {
