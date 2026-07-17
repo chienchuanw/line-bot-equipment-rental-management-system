@@ -241,6 +241,9 @@ function handleBorrowForm_(event, rawText, userId) {
  * 將新的借用紀錄同步到 Google 日曆並回寫 eventId（從 src/borrowService.js 複製）
  */
 function syncNewLoanToCalendar_(loans, rowIndex, record) {
+  // 功能關閉時直接返回，不去讀 users 分頁：關閉就該是零成本的
+  if (!getRentalCalendar_()) return;
+
   // 日曆是給別人看的共用視圖，故套用 users 對照表的名稱而非 LINE 暱稱
   const displayName = resolveDisplayName_(record.userId, record.username, getUserDisplayNameMap_());
 
@@ -251,7 +254,6 @@ function syncNewLoanToCalendar_(loans, rowIndex, record) {
     returnedAt: record.returnedAt
   });
 
-  // eventId 為 null 代表 CALENDAR_ID 未設定（功能關閉），不需回寫
   if (eventId) updateRecordEventId_(loans, rowIndex, eventId);
 }
 
@@ -534,6 +536,16 @@ describe('borrowService - handleBorrowForm_', () => {
 
       expect(env.loansSheet._getData()[1][1]).toBe(USER);
       expect(env.loansSheet._getData()[1][6]).toBe('');
+    });
+
+    test('CALENDAR_ID 未設定時不應該讀取 users 分頁（關閉即零成本）', () => {
+      setupEnv({ userRows: [[USER, '張小明']] });
+      const event = { replyToken: 'test-token' };
+
+      handleBorrowForm_(event, mockBorrowMessages.validSingleItem, USER);
+
+      const usersCalls = env.spreadsheet.getSheetByName.mock.calls.filter(([name]) => name === 'users');
+      expect(usersCalls).toHaveLength(0);
     });
 
     test('日曆爆掉時使用者仍應該先收到成功回覆，例外才往上拋', () => {

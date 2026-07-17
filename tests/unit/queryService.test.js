@@ -53,20 +53,37 @@ function parseDotMonth_(ymDot) {
 }
 
 // 從 src/sheetService.js 複製函式定義
+// 從 src/config.js 複製
+const LOANS_HEADERS = ['ts', 'userId', 'username', 'items', 'borrowedAt', 'returnedAt', 'eventId'];
+
+/**
+ * 安全地取得儲存格值（從 src/sheetService.js 複製）
+ */
+function safeCell_(row, i) {
+  if (i === -1) return '';
+  return row[i];
+}
+
+/**
+ * 取得所有借用紀錄資料（從 src/sheetService.js 複製）
+ */
 function getLoanRows_(sheet) {
-  const data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return [];
+  const rng = sheet.getDataRange().getValues();
+  if (!rng || rng.length < 2) return [];
 
-  const headers = data[0];
-  const rows = data.slice(1);
+  const header = rng.shift().map(String);
+  const idx = {};
+  LOANS_HEADERS.forEach((h) => { idx[h] = header.indexOf(h); });
 
-  return rows.map(row => {
-    const obj = {};
-    headers.forEach((header, index) => {
-      obj[header] = row[index];
-    });
-    return obj;
-  });
+  return rng.map(row => ({
+    ts: safeCell_(row, idx['ts']),
+    userId: safeCell_(row, idx['userId']),
+    username: safeCell_(row, idx['username']),
+    items: safeCell_(row, idx['items']),
+    borrowedAt: safeCell_(row, idx['borrowedAt']),
+    returnedAt: safeCell_(row, idx['returnedAt']),
+    eventId: safeCell_(row, idx['eventId']),
+  }));
 }
 
 // Mock 全域函式

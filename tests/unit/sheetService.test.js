@@ -83,17 +83,23 @@ describe('sheetService', () => {
       const header = lastCol > 0 ? (sheet.getRange(1, 1, 1, lastCol).getValues()[0] || []) : [];
       const headerStr = header.map(String);
 
+      // 去掉尾端空白儲存格：它們只代表別列在該欄有內容，不代表表頭有那一欄
+      while (headerStr.length && headerStr[headerStr.length - 1].trim() === '') {
+        headerStr.pop();
+      }
+
       // 情況A：空表 → 寫入完整表頭
       if (headerStr.length === 0) {
         sheet.getRange(1, 1, 1, LOANS_HEADERS.length).setValues([LOANS_HEADERS]);
         return;
       }
 
-      // 情況B：現有表頭是 LOANS_HEADERS 的前綴 → 只補缺的表頭，不動資料
-      const isPrefix = headerStr.length <= LOANS_HEADERS.length &&
-        headerStr.every((h, i) => h === LOANS_HEADERS[i]);
+      // 情況B：重疊範圍全部相符 → 補上缺少的表頭（若有），不動資料
+      // 多出來的尾欄（使用者自己加的備註欄）一律容忍
+      const overlap = Math.min(headerStr.length, LOANS_HEADERS.length);
+      const overlapMatches = LOANS_HEADERS.slice(0, overlap).every((h, i) => h === headerStr[i]);
 
-      if (isPrefix) {
+      if (overlapMatches) {
         const missing = LOANS_HEADERS.slice(headerStr.length);
         if (missing.length) {
           sheet.getRange(1, headerStr.length + 1, 1, missing.length).setValues([missing]);
@@ -101,10 +107,10 @@ describe('sheetService', () => {
         return;
       }
 
-      // 情況C：表頭真的對不上 → 拋錯，絕不清空
-      // 在有資料的正式表上 clear() 永遠是錯的選擇；
+      // 情況C：重疊範圍內就對不上 → 欄位錯位，位置式的 appendRow 會寫到錯的欄
+      // 拋錯而非清空：在有資料的正式表上 clear() 永遠是錯的選擇，
       // 寧可讓 bot 壞掉並寄通知信，也不要它安靜地把資料燒掉
-      console.error('loans 表頭與 LOANS_HEADERS 不符，且非前綴關係', {
+      console.error('loans 表頭與 LOANS_HEADERS 不符', {
         expected: LOANS_HEADERS,
         actual: headerStr
       });
@@ -171,16 +177,47 @@ describe('sheetService', () => {
       expect(sheet._getData()[1]).toEqual(['重要', '資料', '不能掉']);
     });
 
-    test('表頭比 LOANS_HEADERS 長時應該視為非前綴並拋錯', () => {
+    test('使用者自己加在尾端的備註欄應該被容忍而非拋錯', () => {
+      // 前 N 欄仍然正確，appendRow 的位置式寫入不受影響，
+      // getLoanRows_ 用 indexOf 讀取也不受影響 → 不該擋下整個 bot
       const sheet = createMockSheet('loans', [
-        [...LOANS_HEADERS, '多餘欄位'],
-        ['重要', '資料']
+        [...LOANS_HEADERS, '備註'],
+        ['a', 'b', 'c', 'd', 'e', 'f', 'g', '這批器材有刮傷']
       ]);
       env.spreadsheet.getSheetByName = jest.fn(() => sheet);
-      jest.spyOn(console, 'error').mockImplementation(() => { });
 
-      expect(() => ensureLoansHeaders_()).toThrow('loans 工作表的表頭結構異常');
+      expect(() => ensureLoansHeaders_()).not.toThrow();
       expect(sheet.clear).not.toHaveBeenCalled();
+      expect(sheet._getData()[1][7]).toBe('這批器材有刮傷');
+    });
+
+    test('只有某一列在多出來的欄有內容時也應該被容忍', () => {
+      // getLastColumn() 是「整張表」的最後一欄，不是第 1 列的。
+      // 有人在 H 欄某列打了字，表頭讀出來就會多一個空字串尾巴——
+      // 那不是結構損壞，不該讓每個 doPost 都拋錯
+      const sheet = createMockSheet('loans', [
+        [...LOANS_HEADERS],
+        ['a', 'b', 'c', 'd', 'e', 'f', 'g', '隨手寫的備註']
+      ]);
+      env.spreadsheet.getSheetByName = jest.fn(() => sheet);
+
+      expect(() => ensureLoansHeaders_()).not.toThrow();
+      expect(sheet.clear).not.toHaveBeenCalled();
+    });
+
+    test('舊表頭 + 別列有雜訊時仍應該正確補欄', () => {
+      // 尾端空白必須先去掉，否則會被誤判成「表頭比 LOANS_HEADERS 長」
+      const oldHeaders = LOANS_HEADERS.slice(0, LOANS_HEADERS.length - 1);
+      const sheet = createMockSheet('loans', [
+        [...oldHeaders],
+        ['a', 'b', 'c', 'd', 'e', 'f', '', '雜訊']
+      ]);
+      env.spreadsheet.getSheetByName = jest.fn(() => sheet);
+
+      ensureLoansHeaders_();
+
+      expect(sheet.clear).not.toHaveBeenCalled();
+      expect(sheet._getData()[0]).toEqual(LOANS_HEADERS);
     });
 
     test('表頭長度相同但內容不同時應該拋錯而非清空', () => {
