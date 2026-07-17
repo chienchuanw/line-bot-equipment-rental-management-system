@@ -31,7 +31,7 @@ describe('sheetService', () => {
 
     global.SpreadsheetApp = mockSpreadsheetApp;
     global.SHEET_LOANS = 'loans';
-    global.LOANS_HEADERS = ['ts', 'userId', 'username', 'items', 'borrowedAt', 'returnedAt'];
+    global.LOANS_HEADERS = ['ts', 'userId', 'username', 'items', 'borrowedAt', 'returnedAt', 'eventId'];
   });
 
   afterEach(() => {
@@ -220,8 +220,33 @@ describe('sheetService', () => {
         items: safeCell_(row, idx['items']),
         borrowedAt: safeCell_(row, idx['borrowedAt']),
         returnedAt: safeCell_(row, idx['returnedAt']),
+        eventId: safeCell_(row, idx['eventId']),
       }));
     }
+
+    test('應該讀出 eventId 欄位', () => {
+      const sheet = createMockSheet('loans', [
+        [...LOANS_HEADERS],
+        [new Date(2025, 8, 3), 'U111', '張小明', '相機A', new Date(2025, 8, 10), new Date(2025, 8, 12), 'evt-1@google.com']
+      ]);
+
+      const rows = getLoanRows_(sheet);
+
+      expect(rows[0].eventId).toBe('evt-1@google.com');
+    });
+
+    test('補欄前的舊資料列沒有 eventId 時應該回傳 undefined 而非爆炸', () => {
+      // 模擬「表頭已補欄，但既有資料列仍只有 6 格」的真實 migration 後狀態
+      const sheet = createMockSheet('loans', [
+        [...LOANS_HEADERS],
+        [new Date(2025, 8, 3), 'U111', '張小明', '相機A', new Date(2025, 8, 10), new Date(2025, 8, 12)]
+      ]);
+
+      const rows = getLoanRows_(sheet);
+
+      expect(rows[0].eventId).toBeUndefined();
+      expect(rows[0].userId).toBe('U111');
+    });
 
     test('應該正確讀取所有借用紀錄', () => {
       // 建立測試資料
@@ -343,6 +368,73 @@ describe('sheetService', () => {
 
       const newDate = new Date(2025, 8, 5, 0, 0, 0, 0);
       const result = updateRecordReturnDate_(env.loansSheet, 2, newDate);
+
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('updateRecordEventId_ - 回寫 eventId', () => {
+    /**
+     * 更新特定記錄的 eventId
+     */
+    function updateRecordEventId_(sheet, rowIndex, eventId) {
+      try {
+        const header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+        const eventIdIndex = header.indexOf('eventId');
+
+        if (eventIdIndex === -1) {
+          console.error('找不到 eventId 欄位');
+          return false;
+        }
+
+        // 更新指定行的 eventId 欄位（欄位索引+1因為是1-based）
+        sheet.getRange(rowIndex, eventIdIndex + 1).setValue(eventId);
+        return true;
+      } catch (error) {
+        console.error('回寫 eventId 時發生錯誤:', error);
+        return false;
+      }
+    }
+
+    test('應該把 eventId 寫入正確的欄位', () => {
+      const sheet = createMockSheet('loans', [
+        [...LOANS_HEADERS],
+        [new Date(2025, 8, 3), 'U111', '張小明', '相機A', new Date(2025, 8, 10), new Date(2025, 8, 12), '']
+      ]);
+
+      const result = updateRecordEventId_(sheet, 2, 'evt-new@google.com');
+
+      expect(result).toBe(true);
+      expect(sheet._getData()[1][6]).toBe('evt-new@google.com');
+    });
+
+    test('不應該動到同一列的其他欄位', () => {
+      const sheet = createMockSheet('loans', [
+        [...LOANS_HEADERS],
+        [new Date(2025, 8, 3), 'U111', '張小明', '相機A', new Date(2025, 8, 10), new Date(2025, 8, 12), '']
+      ]);
+
+      updateRecordEventId_(sheet, 2, 'evt-new@google.com');
+
+      expect(sheet._getData()[1][1]).toBe('U111');
+      expect(sheet._getData()[1][3]).toBe('相機A');
+    });
+
+    test('找不到 eventId 欄位時應該回傳 false 而非拋錯', () => {
+      const sheet = createMockSheet('loans', [['ts', 'userId'], ['a', 'b']]);
+      jest.spyOn(console, 'error').mockImplementation(() => { });
+
+      const result = updateRecordEventId_(sheet, 2, 'evt-1@google.com');
+
+      expect(result).toBe(false);
+    });
+
+    test('發生例外時應該回傳 false 而非往上拋', () => {
+      const sheet = createMockSheet('loans', [[...LOANS_HEADERS], ['a']]);
+      sheet.getRange = jest.fn(() => { throw new Error('Sheets API error'); });
+      jest.spyOn(console, 'error').mockImplementation(() => { });
+
+      const result = updateRecordEventId_(sheet, 2, 'evt-1@google.com');
 
       expect(result).toBe(false);
     });

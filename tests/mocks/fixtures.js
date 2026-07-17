@@ -50,7 +50,8 @@ function createMockLoanRecord(options = {}) {
     items = `${mockEquipment.camera}, ${mockEquipment.tripod}`,
     borrowedAt = new Date(2025, 8, 10), // 2025.09.10
     returnedAt = new Date(2025, 8, 12),  // 2025.09.12
-    ts = new Date(2025, 8, 3, 14, 30, 0) // 2025.09.03 14:30:00
+    ts = new Date(2025, 8, 3, 14, 30, 0), // 2025.09.03 14:30:00
+    eventId = ''                          // 預設為空，模擬未同步日曆的紀錄
   } = options;
 
   return {
@@ -59,7 +60,8 @@ function createMockLoanRecord(options = {}) {
     username,
     items,
     borrowedAt,
-    returnedAt
+    returnedAt,
+    eventId
   };
 }
 
@@ -101,16 +103,17 @@ const mockLoanRecords = [
  * @returns {Array<Array>} Sheet 資料格式
  */
 function loanRecordsToSheetData(records) {
-  const headers = ['ts', 'userId', 'username', 'items', 'borrowedAt', 'returnedAt'];
+  const headers = ['ts', 'userId', 'username', 'items', 'borrowedAt', 'returnedAt', 'eventId'];
   const rows = records.map(record => [
     record.ts,
     record.userId,
     record.username,
     record.items,
     record.borrowedAt,
-    record.returnedAt
+    record.returnedAt,
+    record.eventId || ''
   ]);
-  
+
   return [headers, ...rows];
 }
 

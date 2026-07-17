@@ -106,7 +106,8 @@ function handleBorrowForm_(event, rawText, userId) {
     username,
     parsed.items,
     parsed.borrowedAt,
-    parsed.returnedAt
+    parsed.returnedAt,
+    ''                  // eventId ← 建立日曆事件後回寫
   ]);
 
   mockReplyMessage(event.replyToken,
@@ -163,6 +164,18 @@ describe('borrowService - handleBorrowForm_', () => {
       expect(appendedRow[3]).toBe('相機A, 三腳架, 燈具'); // items
       expect(appendedRow[4]).toBeInstanceOf(Date); // borrowedAt
       expect(appendedRow[5]).toBeInstanceOf(Date); // returnedAt
+      expect(appendedRow[6]).toBe(''); // eventId ← 建立日曆事件後才回寫
+    });
+
+    test('寫入的欄位數應該與 LOANS_HEADERS 一致', () => {
+      const event = { replyToken: 'test-token' };
+      const userId = mockUsers.user1.userId;
+
+      handleBorrowForm_(event, mockBorrowMessages.valid, userId);
+
+      // appendRow 是位置式寫入，長度與 LOANS_HEADERS 不符即代表欄位錯位
+      const appendedRow = env.loansSheet.appendRow.mock.calls[0][0];
+      expect(appendedRow).toHaveLength(7);
     });
 
     test('應該回覆確認訊息', () => {
