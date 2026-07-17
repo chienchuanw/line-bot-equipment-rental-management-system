@@ -22,7 +22,15 @@ function getLoansSheet_() {
 
 /**
  * 確保借用紀錄工作表存在且有正確的標題列
- * 如果工作表不存在會自動建立，標題不正確會重新設定
+ *
+ * 三種情況：
+ * A. 空表 → 寫入完整表頭
+ * B. 現有表頭是 LOANS_HEADERS 的前綴 → 只補缺的表頭，不動資料
+ * C. 表頭非前綴 → 拋錯，絕不清空
+ *
+ * 情況 B 讓「新增欄位」成為安全操作：doPost 每個 request 都會呼叫本函式，
+ * 若沿用舊版「表頭不符就 sheet.clear()」的做法，LOANS_HEADERS 一旦新增
+ * 欄位並上線，下一個 LINE 訊息就會清空正式表上所有租借紀錄。
  */
 function ensureLoansHeaders_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -33,20 +41,36 @@ function ensureLoansHeaders_() {
     sheet = ss.insertSheet(SHEET_LOANS);
   }
 
-  // 檢查標題列是否正確
   const lastCol = sheet.getLastColumn();
   const header = lastCol > 0 ? (sheet.getRange(1, 1, 1, lastCol).getValues()[0] || []) : [];
   const headerStr = header.map(String);
 
-  // 比較標題是否完全相同
-  const same = LOANS_HEADERS.length === headerStr.length &&
-    LOANS_HEADERS.every((h, i) => h === headerStr[i]);
-
-  // 如果標題不正確，重新設定
-  if (!same) {
-    sheet.clear();
+  // 情況A：空表 → 寫入完整表頭
+  if (headerStr.length === 0) {
     sheet.getRange(1, 1, 1, LOANS_HEADERS.length).setValues([LOANS_HEADERS]);
+    return;
   }
+
+  // 情況B：現有表頭是 LOANS_HEADERS 的前綴 → 只補缺的表頭，不動資料
+  const isPrefix = headerStr.length <= LOANS_HEADERS.length &&
+    headerStr.every((h, i) => h === LOANS_HEADERS[i]);
+
+  if (isPrefix) {
+    const missing = LOANS_HEADERS.slice(headerStr.length);
+    if (missing.length) {
+      sheet.getRange(1, headerStr.length + 1, 1, missing.length).setValues([missing]);
+    }
+    return;
+  }
+
+  // 情況C：表頭真的對不上 → 拋錯，絕不清空
+  // 在有資料的正式表上 clear() 永遠是錯的選擇；
+  // 寧可讓 bot 壞掉並寄通知信，也不要它安靜地把資料燒掉
+  console.error('loans 表頭與 LOANS_HEADERS 不符，且非前綴關係', {
+    expected: LOANS_HEADERS,
+    actual: headerStr
+  });
+  throw new Error('loans 工作表的表頭結構異常，請人工檢查');
 }
 
 /**

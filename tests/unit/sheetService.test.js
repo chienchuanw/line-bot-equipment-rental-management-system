@@ -10,6 +10,7 @@
  */
 
 const { setupTestEnvironment } = require('../mocks/testHelpers');
+const { createMockSheet } = require('../mocks/mockSheets');
 
 // ==================== Mock 函式 ====================
 
@@ -72,6 +73,7 @@ describe('sheetService', () => {
       const ss = SpreadsheetApp.getActiveSpreadsheet();
       let sheet = ss.getSheetByName(SHEET_LOANS);
 
+      // 如果工作表不存在，建立新的
       if (!sheet) {
         sheet = ss.insertSheet(SHEET_LOANS);
       }
@@ -80,19 +82,38 @@ describe('sheetService', () => {
       const header = lastCol > 0 ? (sheet.getRange(1, 1, 1, lastCol).getValues()[0] || []) : [];
       const headerStr = header.map(String);
 
-      const same = LOANS_HEADERS.length === headerStr.length &&
-        LOANS_HEADERS.every((h, i) => h === headerStr[i]);
-
-      if (!same) {
-        sheet.clear();
+      // 情況A：空表 → 寫入完整表頭
+      if (headerStr.length === 0) {
         sheet.getRange(1, 1, 1, LOANS_HEADERS.length).setValues([LOANS_HEADERS]);
+        return;
       }
+
+      // 情況B：現有表頭是 LOANS_HEADERS 的前綴 → 只補缺的表頭，不動資料
+      const isPrefix = headerStr.length <= LOANS_HEADERS.length &&
+        headerStr.every((h, i) => h === LOANS_HEADERS[i]);
+
+      if (isPrefix) {
+        const missing = LOANS_HEADERS.slice(headerStr.length);
+        if (missing.length) {
+          sheet.getRange(1, headerStr.length + 1, 1, missing.length).setValues([missing]);
+        }
+        return;
+      }
+
+      // 情況C：表頭真的對不上 → 拋錯，絕不清空
+      // 在有資料的正式表上 clear() 永遠是錯的選擇；
+      // 寧可讓 bot 壞掉並寄通知信，也不要它安靜地把資料燒掉
+      console.error('loans 表頭與 LOANS_HEADERS 不符，且非前綴關係', {
+        expected: LOANS_HEADERS,
+        actual: headerStr
+      });
+      throw new Error('loans 工作表的表頭結構異常，請人工檢查');
     }
 
     test('當工作表不存在時應該建立新工作表', () => {
-      // Mock getSheetByName 回傳 null（工作表不存在）
       env.spreadsheet.getSheetByName = jest.fn(() => null);
-      const mockInsertSheet = jest.fn(() => env.loansSheet);
+      const emptySheet = createMockSheet('loans', []);
+      const mockInsertSheet = jest.fn(() => emptySheet);
       env.spreadsheet.insertSheet = mockInsertSheet;
 
       ensureLoansHeaders_();
@@ -100,45 +121,75 @@ describe('sheetService', () => {
       expect(mockInsertSheet).toHaveBeenCalledWith(SHEET_LOANS);
     });
 
-    test('當標題列不正確時應該重新設定標題', () => {
-      // 設定錯誤的標題
-      env.loansSheet.getRange(1, 1, 1, 3).setValues([['wrong', 'header', 'data']]);
-
-      const mockClear = jest.spyOn(env.loansSheet, 'clear');
-      const mockSetValues = jest.fn();
-      env.loansSheet.getRange = jest.fn((row, col, numRows, numCols) => ({
-        getValues: () => [['wrong', 'header', 'data']],
-        setValues: mockSetValues
-      }));
+    test('空表時應該寫入完整表頭', () => {
+      const emptySheet = createMockSheet('loans', []);
+      env.spreadsheet.getSheetByName = jest.fn(() => emptySheet);
 
       ensureLoansHeaders_();
 
-      expect(mockClear).toHaveBeenCalled();
-      expect(mockSetValues).toHaveBeenCalledWith([LOANS_HEADERS]);
+      expect(emptySheet._getData()[0]).toEqual(LOANS_HEADERS);
     });
 
-    test('當標題列正確時不應該修改工作表', () => {
-      // 標題已經正確
-      const mockClear = jest.spyOn(env.loansSheet, 'clear');
+    test('表頭完全相同時不應該有任何寫入', () => {
+      const dataRow = LOANS_HEADERS.map((h, i) => `值${i}`);
+      const sheet = createMockSheet('loans', [[...LOANS_HEADERS], dataRow]);
+      env.spreadsheet.getSheetByName = jest.fn(() => sheet);
 
       ensureLoansHeaders_();
 
-      expect(mockClear).not.toHaveBeenCalled();
+      expect(sheet.clear).not.toHaveBeenCalled();
+      expect(sheet._getData()[1]).toEqual(dataRow);
     });
 
-    test('當工作表為空時應該設定標題', () => {
-      // 清空工作表
-      env.loansSheet.clear();
-
-      const mockSetValues = jest.fn();
-      env.loansSheet.getRange = jest.fn((row, col, numRows, numCols) => ({
-        getValues: () => [[]],
-        setValues: mockSetValues
-      }));
+    test('表頭為前綴時應該只補缺的表頭，且既有資料原封不動', () => {
+      // 模擬「舊表頭少一欄」的補欄情境
+      const oldHeaders = LOANS_HEADERS.slice(0, LOANS_HEADERS.length - 1);
+      const oldDataRow = oldHeaders.map((h, i) => `舊值${i}`);
+      const sheet = createMockSheet('loans', [[...oldHeaders], [...oldDataRow]]);
+      env.spreadsheet.getSheetByName = jest.fn(() => sheet);
 
       ensureLoansHeaders_();
 
-      expect(mockSetValues).toHaveBeenCalledWith([LOANS_HEADERS]);
+      expect(sheet.clear).not.toHaveBeenCalled();
+      expect(sheet._getData()[0]).toEqual(LOANS_HEADERS);
+      // 關鍵：既有資料列必須原封不動
+      expect(sheet._getData()[1]).toEqual(oldDataRow);
+    });
+
+    test('表頭非前綴時應該拋錯且絕不清空資料', () => {
+      const sheet = createMockSheet('loans', [
+        ['完全', '不對', '的表頭'],
+        ['重要', '資料', '不能掉']
+      ]);
+      env.spreadsheet.getSheetByName = jest.fn(() => sheet);
+      jest.spyOn(console, 'error').mockImplementation(() => { });
+
+      expect(() => ensureLoansHeaders_()).toThrow('loans 工作表的表頭結構異常');
+
+      expect(sheet.clear).not.toHaveBeenCalled();
+      expect(sheet._getData()[1]).toEqual(['重要', '資料', '不能掉']);
+    });
+
+    test('表頭比 LOANS_HEADERS 長時應該視為非前綴並拋錯', () => {
+      const sheet = createMockSheet('loans', [
+        [...LOANS_HEADERS, '多餘欄位'],
+        ['重要', '資料']
+      ]);
+      env.spreadsheet.getSheetByName = jest.fn(() => sheet);
+      jest.spyOn(console, 'error').mockImplementation(() => { });
+
+      expect(() => ensureLoansHeaders_()).toThrow('loans 工作表的表頭結構異常');
+      expect(sheet.clear).not.toHaveBeenCalled();
+    });
+
+    test('表頭長度相同但內容不同時應該拋錯而非清空', () => {
+      const wrongHeaders = LOANS_HEADERS.map((h, i) => (i === 2 ? 'wrongName' : h));
+      const sheet = createMockSheet('loans', [wrongHeaders, ['重要', '資料', '不能掉']]);
+      env.spreadsheet.getSheetByName = jest.fn(() => sheet);
+      jest.spyOn(console, 'error').mockImplementation(() => { });
+
+      expect(() => ensureLoansHeaders_()).toThrow('loans 工作表的表頭結構異常');
+      expect(sheet.clear).not.toHaveBeenCalled();
     });
   });
 
