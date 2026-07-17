@@ -152,6 +152,39 @@ function updateRecordEventId_(sheet, rowIndex, eventId) {
 }
 
 /**
+ * 取得 userId → displayName 的對照表
+ *
+ * users 分頁為選配：不存在就回傳空物件，所有名稱一律 fallback 回 LINE 暱稱。
+ * 刻意不自動建表、不套用 ensureLoansHeaders_ 那套自癒邏輯——
+ * 這張表壞掉或還沒建立，都不該讓 bot 停擺。
+ *
+ * 呼叫端應該一次請求只呼叫一次，不要每列都呼叫。
+ *
+ * @returns {Object<string, string>} 對照表；分頁不存在或表頭異常時回傳 {}
+ */
+function getUserDisplayNameMap_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(SHEET_USERS);
+  if (!sheet) return {};
+
+  const rng = sheet.getDataRange().getValues();
+  if (!rng || rng.length < 2) return {};
+
+  const header = rng.shift().map(String);
+  const idIdx = header.indexOf('userId');
+  const nameIdx = header.indexOf('displayName');
+  if (idIdx === -1 || nameIdx === -1) return {};
+
+  const map = {};
+  rng.forEach(row => {
+    const uid = String(row[idIdx] || '').trim();
+    const name = String(row[nameIdx] || '').trim();
+    if (uid && name) map[uid] = name;
+  });
+  return map;
+}
+
+/**
  * 安全地取得儲存格值
  * @param {Array} row - 資料列
  * @param {number} i - 欄位索引
