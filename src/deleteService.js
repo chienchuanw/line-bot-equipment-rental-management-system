@@ -10,6 +10,14 @@
 
 /**
  * 處理刪除器材記錄請求
+ *
+ * 日曆同步刻意放在 try/catch 之外，且在回覆使用者之後：
+ * 若放進 try/catch，日曆的例外會被接住並回覆「處理記錄時發生錯誤」，
+ * 但其實紀錄已經刪成功了——使用者會重試，造成更多混亂。
+ *
+ * 放在 try/catch 之外代表日曆失敗時例外會往上拋，Apps Script 會寄失敗
+ * 通知信給 script owner，使用者則已收到正確的成功訊息。
+ *
  * @param {Object} event - LINE 事件物件
  * @param {string} recordIndex - 記錄編號（從1開始）
  * @param {string} userId - 使用者 ID
@@ -43,10 +51,16 @@ function handleDeleteRecord_(event, recordIndex, userId) {
 
   const recordToProcess = myActiveRecords[index - 1];
 
+  // eventId 必須在 deleteRow 之前讀出來，列一旦刪掉就取不到了
+  const eventId = recordToProcess.eventId;
+
   // 判斷記錄類型：未來記錄 vs 進行中記錄
   const borrowDate = toDateOrNull_(recordToProcess.borrowedAt);
   const returnDate = toDateOrNull_(recordToProcess.returnedAt);
   const isFutureRecord = borrowDate && startOfDay_(borrowDate) > today;
+
+  // 記錄實際發生了什麼，供 try/catch 之外的日曆同步使用
+  let calendarAction = null;
 
   try {
     // 格式化記錄資訊（用於回覆訊息）
@@ -69,6 +83,7 @@ function handleDeleteRecord_(event, recordIndex, userId) {
       ].join('\n');
 
       replyMessage_(event.replyToken, successMessage);
+      calendarAction = 'delete';
 
     } else {
       // 情況B：進行中記錄 - 修改 returnedAt 為今天（提前歸還）
@@ -86,6 +101,7 @@ function handleDeleteRecord_(event, recordIndex, userId) {
         ].join('\n');
 
         replyMessage_(event.replyToken, successMessage);
+        calendarAction = 'shorten';
       } else {
         replyMessage_(event.replyToken, '更新租借記錄時發生錯誤，請稍後再試。');
       }
@@ -94,7 +110,16 @@ function handleDeleteRecord_(event, recordIndex, userId) {
   } catch (error) {
     // 記錄錯誤並回覆使用者
     console.error('處理記錄時發生錯誤:', error);
-    replyMessage_(event.replyToken, '處理記錄時發生錯誤，請稍後再試。');
+    // return 而非往下走：sheet 操作失敗時不該再嘗試同步日曆
+    return replyMessage_(event.replyToken, '處理記錄時發生錯誤，請稍後再試。');
+  }
+
+  // 日曆同步：刻意放在 try/catch 之外且在回覆之後
+  // 提前歸還是縮短事件而非刪除，因為器材確實被借出過，那段歷史該留在日曆上
+  if (calendarAction === 'delete') {
+    deleteRentalEvent_(eventId);
+  } else if (calendarAction === 'shorten') {
+    updateRentalEventEnd_(eventId, today);
   }
 }
 

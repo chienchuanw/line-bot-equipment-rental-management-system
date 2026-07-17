@@ -7,7 +7,8 @@
  */
 
 const { mockUsers, createMockLoanRecord } = require('../mocks/fixtures');
-const { setupTestEnvironment } = require('../mocks/testHelpers');
+const { setupTestEnvironment, isSameDay } = require('../mocks/testHelpers');
+const { createMockCalendarEvent } = require('../mocks/mockCalendar');
 
 // ==================== 輔助函式 ====================
 // 從原始檔案複製必要的函式
@@ -90,6 +91,70 @@ function getLoanRows_(sheet) {
     });
     return record;
   });
+}
+
+/**
+ * 將日期加上指定天數（從 src/dateUtils.js 複製）
+ */
+function addDays_(d, n) {
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x;
+}
+
+/**
+ * 取得 Script Properties 中的設定值（從 src/config.js 複製）
+ */
+function getProp_(key) {
+  return PropertiesService.getScriptProperties().getProperty(key);
+}
+
+/**
+ * 取得器材租借用的目標日曆（從 src/calendarService.js 複製）
+ */
+function getRentalCalendar_() {
+  const calendarId = getProp_('CALENDAR_ID');
+  if (!calendarId) return null;
+
+  const calendar = CalendarApp.getCalendarById(calendarId);
+  if (!calendar) {
+    console.error('找不到日曆，請確認 CALENDAR_ID 正確且已分享給此帳號', calendarId);
+    throw new Error(`找不到日曆：${calendarId}`);
+  }
+  return calendar;
+}
+
+/**
+ * 刪除器材租借的日曆事件（從 src/calendarService.js 複製）
+ */
+function deleteRentalEvent_(eventId) {
+  if (!eventId) return false;
+
+  const calendar = getRentalCalendar_();
+  if (!calendar) return false;
+
+  const event = calendar.getEventById(eventId);
+  if (!event) return false;
+
+  event.deleteEvent();
+  return true;
+}
+
+/**
+ * 縮短器材租借事件的結束日（從 src/calendarService.js 複製）
+ */
+function updateRentalEventEnd_(eventId, newReturnedAt) {
+  if (!eventId) return false;
+
+  const calendar = getRentalCalendar_();
+  if (!calendar) return false;
+
+  const event = calendar.getEventById(eventId);
+  if (!event) return false;
+
+  const start = event.getAllDayStartDate();
+  event.setAllDayDates(start, addDays_(startOfDay_(newReturnedAt), 1));
+  return true;
 }
 
 // ==================== Mock 函式 ====================
@@ -236,7 +301,9 @@ describe('deleteService', () => {
     }
 
     /**
-     * 處理刪除器材記錄請求
+     * 處理刪除器材記錄請求（從 src/deleteService.js 複製）
+     *
+     * 日曆同步刻意放在 try/catch 之外，且在回覆使用者之後
      */
     function handleDeleteRecord_(event, recordIndex, userId) {
       const loans = mockGetLoansSheet();
@@ -265,9 +332,15 @@ describe('deleteService', () => {
 
       const recordToProcess = myActiveRecords[index - 1];
 
+      // eventId 必須在 deleteRow 之前讀出來，列一旦刪掉就取不到了
+      const eventId = recordToProcess.eventId;
+
       const borrowDate = toDateOrNull_(recordToProcess.borrowedAt);
       const returnDate = toDateOrNull_(recordToProcess.returnedAt);
       const isFutureRecord = borrowDate && startOfDay_(borrowDate) > today;
+
+      // 記錄實際發生了什麼，供 try/catch 之外的日曆同步使用
+      let calendarAction = null;
 
       try {
         const itemsArr = String(recordToProcess.items || '').split(/[，,]/).map(s => s.trim()).filter(Boolean);
@@ -288,6 +361,7 @@ describe('deleteService', () => {
           ].join('\n');
 
           mockReplyMessage(event.replyToken, successMessage);
+          calendarAction = 'delete';
 
         } else {
           const success = updateRecordReturnDate_(loans, recordToProcess.sheetRowIndex, today);
@@ -304,6 +378,7 @@ describe('deleteService', () => {
             ].join('\n');
 
             mockReplyMessage(event.replyToken, successMessage);
+            calendarAction = 'shorten';
           } else {
             mockReplyMessage(event.replyToken, '更新租借記錄時發生錯誤，請稍後再試。');
           }
@@ -311,7 +386,16 @@ describe('deleteService', () => {
 
       } catch (error) {
         console.error('處理記錄時發生錯誤:', error);
-        mockReplyMessage(event.replyToken, '處理記錄時發生錯誤，請稍後再試。');
+        // return 而非往下走：sheet 操作失敗時不該再嘗試同步日曆
+        return mockReplyMessage(event.replyToken, '處理記錄時發生錯誤，請稍後再試。');
+      }
+
+      // 日曆同步：刻意放在 try/catch 之外且在回覆之後
+      // 提前歸還是縮短事件而非刪除，因為器材確實被借出過，那段歷史該留在日曆上
+      if (calendarAction === 'delete') {
+        deleteRentalEvent_(eventId);
+      } else if (calendarAction === 'shorten') {
+        updateRentalEventEnd_(eventId, today);
       }
     }
 
@@ -530,6 +614,172 @@ describe('deleteService', () => {
       handleDeleteRecord_(event, '1', userId);
 
       expect(mockReplyMessage).toHaveBeenCalledWith('test-token', expect.stringContaining('相機A, 三腳架, 燈具'));
+    });
+
+    describe('日曆同步', () => {
+      const CAL_ID = 'foufa@group.calendar.google.com';
+      const USER = mockUsers.user1.userId;
+
+      /**
+       * 以指定的租借紀錄與日曆事件重建測試環境
+       */
+      function setupEnv(loanRecords, options = {}) {
+        env = setupTestEnvironment({
+          loanRecords,
+          properties: {
+            LINE_CHANNEL_TOKEN: 'mock-channel-token',
+            ...(options.noCalendarId ? {} : { CALENDAR_ID: CAL_ID })
+          },
+          calendarId: CAL_ID,
+          calendarEvents: options.calendarEvents || {}
+        });
+        mockGetLoansSheet = jest.fn(() => env.loansSheet);
+        return env;
+      }
+
+      /**
+       * 建立一筆未來的租借紀錄
+       */
+      function futureRecord(eventId) {
+        return createMockLoanRecord({
+          userId: USER,
+          items: '相機A',
+          borrowedAt: new Date(2099, 11, 1, 0, 0, 0, 0),
+          returnedAt: new Date(2099, 11, 3, 0, 0, 0, 0),
+          eventId
+        });
+      }
+
+      /**
+       * 建立一筆進行中的租借紀錄（今天在租期內）
+       */
+      function inProgressRecord(eventId) {
+        const today = startOfDay_(new Date());
+        return createMockLoanRecord({
+          userId: USER,
+          items: '相機A',
+          borrowedAt: addDays_(today, -2),
+          returnedAt: addDays_(today, 5),
+          eventId
+        });
+      }
+
+      test('刪除未來紀錄時應該刪掉日曆事件', () => {
+        setupEnv([futureRecord('evt-1@google.com')], {
+          calendarEvents: {
+            'evt-1@google.com': createMockCalendarEvent(
+              'evt-1@google.com', '張小明｜相機A',
+              new Date(2099, 11, 1), new Date(2099, 11, 4)
+            )
+          }
+        });
+
+        handleDeleteRecord_({ replyToken: 'test-token' }, '1', USER);
+
+        expect(env.calendar._getEvents()['evt-1@google.com']._isDeleted()).toBe(true);
+        // 只剩表頭
+        expect(env.loansSheet._getData().length).toBe(1);
+      });
+
+      test('提前歸還時應該縮短事件而非刪除', () => {
+        const mockEvent = createMockCalendarEvent(
+          'evt-2@google.com', '張小明｜相機A',
+          addDays_(startOfDay_(new Date()), -2), addDays_(startOfDay_(new Date()), 6)
+        );
+        setupEnv([inProgressRecord('evt-2@google.com')], {
+          calendarEvents: { 'evt-2@google.com': mockEvent }
+        });
+
+        handleDeleteRecord_({ replyToken: 'test-token' }, '1', USER);
+
+        expect(mockEvent.deleteEvent).not.toHaveBeenCalled();
+        expect(mockEvent.setAllDayDates).toHaveBeenCalled();
+      });
+
+      test('提前歸還的事件結束日應該為今天的隔天（排他）', () => {
+        const mockEvent = createMockCalendarEvent(
+          'evt-2@google.com', '張小明｜相機A',
+          addDays_(startOfDay_(new Date()), -2), addDays_(startOfDay_(new Date()), 6)
+        );
+        setupEnv([inProgressRecord('evt-2@google.com')], {
+          calendarEvents: { 'evt-2@google.com': mockEvent }
+        });
+
+        handleDeleteRecord_({ replyToken: 'test-token' }, '1', USER);
+
+        const [, end] = mockEvent.setAllDayDates.mock.calls[0];
+        expect(isSameDay(end, addDays_(startOfDay_(new Date()), 1))).toBe(true);
+      });
+
+      test('eventId 為空的舊紀錄應該正常刪除且不碰日曆', () => {
+        setupEnv([futureRecord('')]);
+
+        expect(() => handleDeleteRecord_({ replyToken: 'test-token' }, '1', USER)).not.toThrow();
+
+        expect(env.loansSheet._getData().length).toBe(1);
+        expect(env.calendar.getEventById).not.toHaveBeenCalled();
+      });
+
+      test('事件已被手動從日曆刪除時仍應該讓使用者刪掉紀錄', () => {
+        // 不能因為日曆找不到就讓使用者刪不掉自己的紀錄
+        setupEnv([futureRecord('已經不存在@google.com')]);
+
+        expect(() => handleDeleteRecord_({ replyToken: 'test-token' }, '1', USER)).not.toThrow();
+
+        expect(env.loansSheet._getData().length).toBe(1);
+        expect(mockReplyMessage).toHaveBeenCalledWith(
+          'test-token',
+          expect.stringContaining('已取消未來租借記錄')
+        );
+      });
+
+      test('CALENDAR_ID 未設定時應該正常刪除紀錄', () => {
+        setupEnv([futureRecord('evt-1@google.com')], { noCalendarId: true });
+
+        expect(() => handleDeleteRecord_({ replyToken: 'test-token' }, '1', USER)).not.toThrow();
+
+        expect(env.loansSheet._getData().length).toBe(1);
+      });
+
+      test('日曆爆掉時使用者仍應該收到成功回覆而非錯誤訊息', () => {
+        setupEnv([futureRecord('evt-1@google.com')]);
+        env.calendar.getEventById = jest.fn(() => {
+          throw new Error('Calendar service error');
+        });
+
+        // 例外往上拋 → Apps Script 寄通知信給 script owner
+        expect(() => handleDeleteRecord_({ replyToken: 'test-token' }, '1', USER))
+          .toThrow('Calendar service error');
+
+        // 關鍵：使用者收到的是成功訊息，不是「處理記錄時發生錯誤」。
+        // 若日曆同步被包在 try/catch 裡，這裡就會誤報錯誤，
+        // 但紀錄其實已經刪成功了，使用者會重試造成更多混亂。
+        expect(mockReplyMessage).toHaveBeenCalledWith(
+          'test-token',
+          expect.stringContaining('已取消未來租借記錄')
+        );
+        expect(mockReplyMessage).not.toHaveBeenCalledWith(
+          'test-token',
+          expect.stringContaining('處理記錄時發生錯誤')
+        );
+      });
+
+      test('eventId 應該在 deleteRow 之前讀出（列刪掉後就取不到）', () => {
+        setupEnv([futureRecord('evt-1@google.com')], {
+          calendarEvents: {
+            'evt-1@google.com': createMockCalendarEvent(
+              'evt-1@google.com', '張小明｜相機A',
+              new Date(2099, 11, 1), new Date(2099, 11, 4)
+            )
+          }
+        });
+
+        handleDeleteRecord_({ replyToken: 'test-token' }, '1', USER);
+
+        // 列已刪除，但日曆仍收到正確的 eventId
+        expect(env.loansSheet._getData().length).toBe(1);
+        expect(env.calendar.getEventById).toHaveBeenCalledWith('evt-1@google.com');
+      });
     });
   });
 });
