@@ -74,6 +74,15 @@ function toDateOrNull_(v) {
   return isNaN(d) ? null : d;
 }
 
+/**
+ * 將日期加上指定天數
+ */
+function addDays_(d, n) {
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x;
+}
+
 // ==================== 測試開始 ====================
 
 describe('dateUtils - parseDotDate_', () => {
@@ -531,6 +540,93 @@ describe('dateUtils - toDateOrNull_', () => {
       const result = toDateOrNull_(parsed);
 
       expect(result).toBeNull();
+    });
+  });
+});
+
+describe('dateUtils - addDays_', () => {
+  describe('正常加減測試', () => {
+    test('應該在同月內正確加天數', () => {
+      const result = addDays_(createDate(2025, 9, 11), 1);
+
+      expect(isSameDay(result, createDate(2025, 9, 12))).toBe(true);
+    });
+
+    test('應該正確跨月', () => {
+      const result = addDays_(createDate(2025, 9, 30), 1);
+
+      expect(isSameDay(result, createDate(2025, 10, 1))).toBe(true);
+    });
+
+    test('應該正確跨年', () => {
+      const result = addDays_(createDate(2025, 12, 31), 1);
+
+      expect(isSameDay(result, createDate(2026, 1, 1))).toBe(true);
+    });
+
+    test('應該正確處理閏年的 2 月', () => {
+      const result = addDays_(createDate(2024, 2, 28), 1);
+
+      expect(isSameDay(result, createDate(2024, 2, 29))).toBe(true);
+    });
+
+    test('應該正確處理平年的 2 月', () => {
+      const result = addDays_(createDate(2025, 2, 28), 1);
+
+      expect(isSameDay(result, createDate(2025, 3, 1))).toBe(true);
+    });
+
+    test('加 0 天應該回傳同一天', () => {
+      const result = addDays_(createDate(2025, 9, 11), 0);
+
+      expect(isSameDay(result, createDate(2025, 9, 11))).toBe(true);
+    });
+
+    test('應該支援負數天數', () => {
+      const result = addDays_(createDate(2025, 9, 1), -1);
+
+      expect(isSameDay(result, createDate(2025, 8, 31))).toBe(true);
+    });
+  });
+
+  describe('不可變性測試', () => {
+    test('不應該修改原本的 Date 物件', () => {
+      const original = createDate(2025, 9, 11);
+
+      addDays_(original, 5);
+
+      expect(isSameDay(original, createDate(2025, 9, 11))).toBe(true);
+    });
+
+    test('應該回傳新的 Date 物件', () => {
+      const original = createDate(2025, 9, 11);
+      const result = addDays_(original, 1);
+
+      expect(result).not.toBe(original);
+      expect(result).toBeInstanceOf(Date);
+    });
+  });
+
+  describe('整天事件排他結束日的實際用途', () => {
+    test('租 9/11~9/13 的整天事件結束日應該為 9/14', () => {
+      // 整天事件的 end 為排他，故 returnedAt + 1
+      const result = addDays_(createDate(2025, 9, 13), 1);
+
+      expect(isSameDay(result, createDate(2025, 9, 14))).toBe(true);
+    });
+
+    test('單日租借 9/11 的整天事件結束日應該為 9/12', () => {
+      const result = addDays_(createDate(2025, 9, 11), 1);
+
+      expect(isSameDay(result, createDate(2025, 9, 12))).toBe(true);
+    });
+
+    test('應該保留時間為 00:00:00', () => {
+      const result = addDays_(createDate(2025, 9, 11), 1);
+
+      expect(result.getHours()).toBe(0);
+      expect(result.getMinutes()).toBe(0);
+      expect(result.getSeconds()).toBe(0);
     });
   });
 });

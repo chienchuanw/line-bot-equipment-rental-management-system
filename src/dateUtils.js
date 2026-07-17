@@ -76,3 +76,17 @@ function toDateOrNull_(v) {
   const d = new Date(v);
   return isNaN(d) ? null : d;
 }
+
+/**
+ * 將日期加上指定天數
+ * 主要用途：Google 日曆整天事件的結束日為「排他」，需要 +1
+ * 例如租用 9/11 ~ 9/13，建立事件時必須傳 end = 9/14
+ * @param {Date} d - 原始日期
+ * @param {number} n - 要加的天數（可為負數）
+ * @returns {Date} 新的日期物件（不修改原物件）
+ */
+function addDays_(d, n) {
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x;
+}
