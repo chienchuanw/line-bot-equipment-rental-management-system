@@ -15,7 +15,10 @@
   - [查器材](#查器材)
   - [我的租借與刪除](#我的租借與刪除)
 - [設定](#設定)
+- [Google 日曆同步](#google-日曆同步)
 - [資料結構](#資料結構)
+  - [`loans` 工作表](#loans-工作表)
+  - [`users` 工作表（選用）](#users-工作表選用)
 - [專案結構](#專案結構)
 - [本地開發](#本地開發)
   - [使用 clasp 同步程式碼](#使用-clasp-同步程式碼)
@@ -42,6 +45,8 @@
 - **我的租借**：列出自己進行中與未來的租借記錄，並附上可操作的編號。
 - **取消與提前歸還**：未來的記錄可直接取消；進行中的記錄則調整為提前歸還。
 - **使用者識別**：自動透過 LINE API 取得借用者的顯示名稱並記錄。
+- **Google 日曆同步**（選用）：登記成功時自動在指定日曆建立橫跨租借期間的整天事件；取消時刪除事件，提前歸還時縮短事件。詳見 [Google 日曆同步](#google-日曆同步)。
+- **顯示名稱對照**（選用）：LINE 暱稱常是綽號或表情符號，可透過 `users` 工作表指定固定名稱，套用於日曆與查詢結果。
 
 ## 開始使用
 
@@ -66,6 +71,8 @@ pnpm install
 **2. 建立 Google 試算表**
 
 建立一份新的 Google 試算表。系統會在首次請求時自動建立名為 `loans` 的工作表與標題列，不需要手動建表。
+
+（若要啟用顯示名稱對照，需另外手動建立 `users` 工作表——這張表不會自動建立。詳見[資料結構](#users-工作表選用)。）
 
 **3. 建立 Apps Script 專案**
 
@@ -99,6 +106,10 @@ clasp push
 **8. 測試**
 
 用手機加入 Bot 為好友，傳送「查指令」。如果收到指令說明，表示設定完成。
+
+**9. （選用）啟用 Google 日曆同步**
+
+見 [docs/deployment-calendar-sync.md](docs/deployment-calendar-sync.md)。這一步會引入新的 OAuth 權限範圍，需要重新授權並建立新的部署版本。
 
 ## 使用方式
 
@@ -192,6 +203,7 @@ clasp push
 | --- | --- | --- |
 | `LINE_CHANNEL_TOKEN` | LINE Bot 的 Channel Access Token，用於回覆訊息與取得使用者名稱 | 是 |
 | `LINE_CHANNEL_SECRET` | LINE Bot 的 Channel Secret | 否 |
+| `CALENDAR_ID` | 器材租借同步的目標 Google 日曆 ID。未設定即代表關閉日曆同步 | 否 |
 
 > 關於 `LINE_CHANNEL_SECRET`：由於 Apps Script 無法取得完整的 HTTP headers，目前 `verifyLineSignature_` 會計算簽名但**不會實際比對**，一律放行。這是此部署方式的已知限制，設定此屬性目前不會提升安全性。
 
@@ -199,22 +211,54 @@ clasp push
 
 若要調整工作表名稱、欄位順序或錯誤訊息，請修改 `src/config.js` 中的 `SHEET_LOANS`、`LOANS_HEADERS`、`UNKNOWN_CMD_MSG`。
 
-> 注意：`ensureLoansHeaders_` 在偵測到標題列與 `LOANS_HEADERS` 不一致時會清空整張工作表並重寫標題。對已有資料的正式試算表變更 `LOANS_HEADERS` 會導致資料遺失。此外，寫入是依欄位順序進行的，調整 `LOANS_HEADERS` 時必須同步調整 `borrowService.js` 中的 `appendRow`。
+> 注意：寫入是依欄位順序進行的，調整 `LOANS_HEADERS` 時必須同步調整 `borrowService.js` 中的 `appendRow`。新增欄位請一律加在**尾端**——`ensureLoansHeaders_` 會自動補上缺少的標題欄且不動既有資料，但在中間插入欄位會被判定為結構異常而拋錯。
+
+## Google 日曆同步
+
+設定 `CALENDAR_ID` 後，器材登記成功時會自動在該日曆建立一個橫跨租借期間的整天事件，標題為「借用人｜器材清單」。取消未來記錄時事件會一併刪除；提前歸還時事件的結束日會縮短為當天（不刪除，因為器材確實被借出過）。
+
+需要注意的三件事：
+
+- **日曆必須分享給執行這個 GAS 專案的帳號**，權限為「變更活動」。Apps Script 永遠以部署者的身分執行，無法以其他 Google 帳號建立事件。
+- **`CalendarApp` 會引入新的 OAuth 權限範圍**，必須在 Apps Script 編輯器重新授權並建立新的部署版本，否則整個 Bot 會停止運作。
+- **日曆同步失敗不會影響借用**：記錄照常建立、使用者照常收到成功回覆，錯誤則以 Apps Script 的失敗通知信寄給專案擁有者。
+
+完整步驟與驗證方式見 **[docs/deployment-calendar-sync.md](docs/deployment-calendar-sync.md)**。
 
 ## 資料結構
 
-系統會自動建立 `loans` 工作表，欄位如下：
+### `loans` 工作表
+
+系統會自動建立，欄位如下：
 
 | 欄位 | 說明 | 範例 |
 | --- | --- | --- |
 | `ts` | 建立時間戳記 | 2025-09-03 14:30:00 |
 | `userId` | LINE 使用者 ID | U1234567890abcdef... |
-| `username` | LINE 顯示名稱 | 張小明 |
+| `username` | LINE 顯示名稱（借用當下的快照） | 張小明 |
 | `items` | 租用器材清單 | 相機A, 三腳架, 燈具 |
 | `borrowedAt` | 租用日期 | 2025-09-10 |
 | `returnedAt` | 歸還日期 | 2025-09-12 |
+| `eventId` | 對應的 Google 日曆事件 ID | evt-xxx@google.com |
 
 使用者輸入的「租用日期」對應 `borrowedAt`，「歸還日期」對應 `returnedAt`。
+
+未啟用日曆同步、或啟用之前就存在的舊記錄，`eventId` 為空白，不影響任何功能。
+
+### `users` 工作表（選用）
+
+需自行建立。用來把 LINE 使用者 ID 對應到固定的顯示名稱：
+
+| 欄位 | 說明 | 範例 |
+| --- | --- | --- |
+| `userId` | LINE 使用者 ID | U1234567890abcdef... |
+| `displayName` | 要顯示的名稱 | 王小明 |
+
+LINE 暱稱是使用者隨時可以改的，常是綽號或表情符號；`username` 欄位又是借用當下的快照，所以同一個人在不同記錄裡可能顯示成不同名字。這張表解決的就是這個問題。
+
+- 名稱在**顯示時**才解析，所以修改對照表會連既有記錄的顯示一起更新。
+- 套用於**日曆事件標題**與**查器材**的回覆。「我的租借」與借器材的確認訊息刻意不套用——那是使用者看自己的畫面。
+- 找不到對應時退回 LINE 暱稱。這張表不存在時整個功能靜默略過，Bot 照常運作。
 
 ## 專案結構
 
@@ -224,23 +268,27 @@ foufa-line-bot/
 │   ├── appsscript.json     # Apps Script 資訊清單（時區、執行階段、webapp 設定）
 │   ├── main.js             # Webhook 入口（doGet / doPost）與指令路由
 │   ├── config.js           # 常數與 Script Properties 讀取
-│   ├── dateUtils.js        # 日期解析、格式化與比較
+│   ├── dateUtils.js        # 日期解析、格式化、比較與加減
 │   ├── sheetService.js     # Google Sheets 存取
 │   ├── lineService.js      # LINE API 通訊
+│   ├── calendarService.js  # Google 日曆存取
+│   ├── userService.js      # 顯示名稱解析
 │   ├── borrowService.js    # 借用邏輯與表單解析
 │   ├── queryService.js     # 日期／月份／個人查詢與指令說明
 │   ├── deleteService.js    # 刪除與提前歸還邏輯
 │   └── testDebug.js        # 早期手動除錯工具，非正式功能
 ├── tests/
 │   ├── unit/               # 單元測試
-│   ├── mocks/              # GAS 與 LINE API 的 mock 工具
+│   ├── mocks/              # GAS、LINE API 與日曆的 mock 工具
 │   └── setup.js            # Jest 環境設定
+├── docs/
+│   └── deployment-calendar-sync.md   # 日曆同步部署清單
 ├── .clasp.json             # clasp 設定（scriptId、rootDir）
 ├── .claspignore            # 排除不推送到 Apps Script 的檔案
 └── jest.config.js
 ```
 
-各層的職責分明：`sheetService.js` 是唯一直接操作 `SpreadsheetApp` 的檔案，`lineService.js` 是唯一直接操作 `UrlFetchApp` 的檔案，其餘服務只處理商業邏輯。
+各層的職責分明，三個外部服務各有唯一的存取入口：`sheetService.js` 是唯一直接操作 `SpreadsheetApp` 的檔案，`lineService.js` 是唯一直接操作 `UrlFetchApp` 的檔案，`calendarService.js` 是唯一直接操作 `CalendarApp` 的檔案。其餘服務只處理商業邏輯。
 
 `main.js` 中的 `handleEvent_` 是**唯一的指令路由**，新增指令時需要在此加上比對分支，並在對應的服務檔案中實作處理函式。
 
@@ -293,6 +341,18 @@ pnpm test -- tests/unit/dateUtils.test.js  # 執行單一測試檔案
 - 確認 `LINE_CHANNEL_TOKEN` 已正確設定於指令碼屬性
 - 以瀏覽器開啟網頁應用程式網址，應顯示 `OK`
 - 執行 `clasp tail-logs` 或在編輯器中查看「執行項目」記錄
+- **若剛啟用日曆同步**：`CalendarApp` 引入了新的 OAuth 權限範圍，未重新授權會導致 `doPost` 整個失敗，不只是日曆不同步。在編輯器中手動執行一次 `doGet` 完成授權，再建立新的部署版本
+
+**日曆上沒有出現事件**
+
+- 確認 `CALENDAR_ID` 已設定。未設定即代表功能關閉，不會有任何錯誤
+- 確認日曆已分享給執行專案的帳號，權限為「變更活動」
+- 檢查專案擁有者的信箱是否收到 Apps Script 的失敗通知信。日曆同步失敗時，借用記錄仍會正常建立、使用者仍會收到成功回覆，錯誤只會以通知信送出
+- 若 `CALENDAR_ID` 打錯，程式會拋錯而非靜默略過，因此一定會收到通知信
+
+**日曆事件比實際租借期間少一天**
+
+- 這不應該發生。Google 的整天事件結束日是排他的，程式已在 `addDays_` 統一處理。若真的發生，檢查 `calendarService.js` 的 `createRentalEvent_` 是否遺漏了 `addDays_(..., 1)`
 
 **推送後行為沒有改變**
 
