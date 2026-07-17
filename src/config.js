@@ -15,11 +15,12 @@ const SHEET_LOANS = 'loans';
 const LOANS_HEADERS = ['ts', 'userId', 'username', 'items', 'borrowedAt', 'returnedAt', 'eventId'];
 
 // users 分頁：userId → displayName 對照表，讓共用視圖顯示認得出來的名字
-// 刻意不套用 ensureLoansHeaders_ 的自癒／補欄邏輯——分頁不存在就是空字典，
+// 表頭為 userId | displayName，由 getUserDisplayNameMap_ 以欄位名定位，順序不拘。
+// 這裡刻意不定義 USERS_HEADERS 常數：不同於 LOANS_HEADERS（承載位置式 appendRow
+// 與補欄式 migration 的語意），users 分頁沒有任何位置式存取，常數只會是裝飾。
+// 也刻意不套用 ensureLoansHeaders_ 的自癒邏輯——分頁不存在就是空字典，
 // 這張表壞掉不該讓 bot 停擺
 const SHEET_USERS = 'users';
-// 供 getUserDisplayNameMap_ 以 header.indexOf 定位欄位，故欄位順序不影響讀取
-const USERS_HEADERS = ['userId', 'displayName'];
 
 // === 訊息設定 ===
 const UNKNOWN_CMD_MSG = '目前沒有此指令，請使用「查指令」查看指令範例';

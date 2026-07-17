@@ -35,7 +35,10 @@ function createMockSheet(name, initialData = []) {
           for (let r = row - 1; r < row - 1 + numRows; r++) {
             const rowData = [];
             for (let c = col - 1; c < col - 1 + numCols; c++) {
-              rowData.push(data[r] ? data[r][c] : '');
+              // 真實的 Sheets API 對空儲存格回傳 ''，不是 undefined。
+              // 這裡必須同時處理「整列不存在」與「該列比請求範圍短」兩種情況，
+              // 否則讀到的會是字串 'undefined'（經 String() 之後）
+              rowData.push(data[r]?.[c] ?? '');
             }
             result.push(rowData);
           }

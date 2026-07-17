@@ -69,6 +69,9 @@ function handleBorrowForm_(event, rawText, userId) {
  * @param {Object} record - { userId, username, items, borrowedAt, returnedAt }
  */
 function syncNewLoanToCalendar_(loans, rowIndex, record) {
+  // 功能關閉時直接返回，不去讀 users 分頁：關閉就該是零成本的
+  if (!getRentalCalendar_()) return;
+
   // 日曆是給別人看的共用視圖，故套用 users 對照表的名稱而非 LINE 暱稱
   const displayName = resolveDisplayName_(record.userId, record.username, getUserDisplayNameMap_());
 
@@ -79,7 +82,6 @@ function syncNewLoanToCalendar_(loans, rowIndex, record) {
     returnedAt: record.returnedAt
   });
 
-  // eventId 為 null 代表 CALENDAR_ID 未設定（功能關閉），不需回寫
   if (eventId) updateRecordEventId_(loans, rowIndex, eventId);
 }
 
