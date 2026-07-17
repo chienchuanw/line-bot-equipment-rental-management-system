@@ -20,14 +20,15 @@ function handleBorrowForm_(event, rawText, userId) {
   const username = fetchLineDisplayName_(userId) || userId;
   const now = new Date();
 
-  // 寫入借用紀錄（欄位順序固定）
+  // 寫入借用紀錄（位置式寫入，欄位順序必須與 LOANS_HEADERS 一致）
   loans.appendRow([
     now,                // ts
     userId,             // userId
     username,           // username
     parsed.items,       // items ← 租用器材
     parsed.borrowedAt,  // borrowedAt ← 租用日期
-    parsed.returnedAt   // returnedAt ← 歸還日期
+    parsed.returnedAt,  // returnedAt ← 歸還日期
+    ''                  // eventId ← 建立日曆事件後回寫
   ]);
 
   // 回覆確認訊息

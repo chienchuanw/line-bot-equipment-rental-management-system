@@ -9,6 +9,8 @@
  * - items: 租用器材清單
  * - borrowedAt: 租用日期（對應使用者輸入的「租用日期」）
  * - returnedAt: 歸還日期（對應使用者輸入的「歸還日期」）
+ * - eventId: 對應的 Google 日曆事件 ID
+ *            （上線前的舊紀錄、或建立時同步失敗過的紀錄為空）
  */
 
 /**
@@ -93,6 +95,7 @@ function getLoanRows_(sheet) {
     items: safeCell_(row, idx['items']),
     borrowedAt: safeCell_(row, idx['borrowedAt']),
     returnedAt: safeCell_(row, idx['returnedAt']),
+    eventId: safeCell_(row, idx['eventId']),
   }));
 }
 
@@ -118,6 +121,32 @@ function updateRecordReturnDate_(sheet, rowIndex, newReturnDate) {
     return true;
   } catch (error) {
     console.error('更新歸還日期時發生錯誤:', error);
+    return false;
+  }
+}
+
+/**
+ * 更新特定記錄的 eventId
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet - 工作表物件
+ * @param {number} rowIndex - 要更新的行號（1-based）
+ * @param {string} eventId - Google 日曆事件 ID
+ * @returns {boolean} 更新是否成功
+ */
+function updateRecordEventId_(sheet, rowIndex, eventId) {
+  try {
+    const header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const eventIdIndex = header.indexOf('eventId');
+
+    if (eventIdIndex === -1) {
+      console.error('找不到 eventId 欄位');
+      return false;
+    }
+
+    // 更新指定行的 eventId 欄位（欄位索引+1因為是1-based）
+    sheet.getRange(rowIndex, eventIdIndex + 1).setValue(eventId);
+    return true;
+  } catch (error) {
+    console.error('回寫 eventId 時發生錯誤:', error);
     return false;
   }
 }

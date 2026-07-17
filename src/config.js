@@ -9,7 +9,9 @@
 
 // === 工作表設定 ===
 const SHEET_LOANS = 'loans';
-const LOANS_HEADERS = ['ts', 'userId', 'username', 'items', 'borrowedAt', 'returnedAt'];
+// 新增欄位一律加在尾端：ensureLoansHeaders_ 靠「現有表頭是否為前綴」判斷是否只補欄，
+// 在中間插入欄位會被判定為非前綴而拋錯
+const LOANS_HEADERS = ['ts', 'userId', 'username', 'items', 'borrowedAt', 'returnedAt', 'eventId'];
 
 // === 訊息設定 ===
 const UNKNOWN_CMD_MSG = '目前沒有此指令，請使用「查指令」查看指令範例';
